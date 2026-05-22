@@ -1,0 +1,7 @@
+# pnpm 11+ reads build-script and other settings from this file
+# (the package.json "pnpm" field is no longer honored).
+#
+# esbuild ships a postinstall script that fetches its native binary; it is a
+# transitive dependency of tsup and tsx and must be allowed to build.
+allowBuilds:
+  esbuild: true

@@ -5,7 +5,7 @@ TypeScript SDK for stablecoin payments by AI agents. Japan-first, JPYC-native.
 ## Project Context
 
 - **Status**: Pre-alpha, built in public, solo developer (k0yote)
-- **Primary language**: TypeScript 5.x (strict, ESM-only)
+- **Primary language**: TypeScript 6.x (strict, ESM-only)
 - **Target users**: AI agent developers (TS/JS ecosystem)
 - **License**: Apache-2.0
 - **Website**: kawasekit.k0yote.dev (planned)
@@ -52,6 +52,9 @@ Do NOT add chains beyond this list without discussion.
 - Kaia support: in active development (Q2-Q3 2026)
 - 1 JPYC = 1 JPY (always)
 - Supports EIP-3009 (transferWithAuthorization) for gasless transfers
+- JPYC contract address is identical across Ethereum, Polygon, Avalanche:
+  0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29 (new JPYC, 電子決済手段, 2025-10 launch)
+- Do NOT use old JPYC (0x431D5dfF...) — it's the legacy 前払式支払手段 version
 
 ### Standards in use
 - **ERC-4337 v0.7**: Account Abstraction. EntryPoint at `0x0000000071727De22E5E9d8BAf0edAc6f37da032`
@@ -179,3 +182,15 @@ examples/           # in-repo example projects (M3)
 - When suggesting a new dependency, justify it in the PR description
 - For Solidity work, switch context to the `kawasekit-contracts` repo (separate)
 - Prefer Plan Mode for any change touching `src/account/`, `src/policy/`, or `src/paymaster/`
+
+## Supply Chain Policy
+
+- pnpm 11 enforces minimumReleaseAge of 1 day by default.
+  Newly published packages are blocked for 24 hours.
+  This is intentional protection against supply chain attacks.
+- If you need to install a brand-new release urgently, use:
+  `pnpm install --config.minimumReleaseAge=0 <package>`
+  (only with strong justification)
+- esbuild is explicitly allowed in pnpm-workspace.yaml because tsup and tsx depend on it.
+- Adding new postinstall-script dependencies requires an explicit allowlist entry.
+

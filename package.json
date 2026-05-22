@@ -1,0 +1,72 @@
+{
+	"name": "kawasekit",
+	"version": "0.0.0",
+	"description": "TypeScript SDK for stablecoin payments by AI agents. Japan-first, JPYC-native.",
+	"license": "Apache-2.0",
+	"author": "k0yote",
+	"homepage": "https://kawasekit.k0yote.dev",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/k0yote/kawasekit.git"
+	},
+	"bugs": {
+		"url": "https://github.com/k0yote/kawasekit/issues"
+	},
+	"keywords": [
+		"stablecoin",
+		"jpyc",
+		"account-abstraction",
+		"erc-4337",
+		"ai-agents",
+		"viem",
+		"zerodev"
+	],
+	"type": "module",
+	"sideEffects": false,
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"engines": {
+		"node": ">=22"
+	},
+	"packageManager": "pnpm@11.2.2",
+	"scripts": {
+		"build": "tsup",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run --passWithNoTests",
+		"test:watch": "vitest",
+		"lint": "biome check .",
+		"format": "biome format --write .",
+		"m1:create-account": "tsx scripts/01-create-account.ts"
+	},
+	"dependencies": {
+		"@zerodev/ecdsa-validator": "5.4.9",
+		"@zerodev/sdk": "5.5.10",
+		"viem": "2.50.4"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.15",
+		"@changesets/cli": "^2.31.0",
+		"@types/node": "^22.0.0",
+		"dotenv": "^17.4.2",
+		"tsup": "^8.5.1",
+		"tsx": "^4.22.3",
+		"typescript": "6.0.3",
+		"vitest": "^4.1.7"
+	}
+}

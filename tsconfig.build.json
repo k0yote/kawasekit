@@ -1,0 +1,11 @@
+{
+	"$schema": "https://json.schemastore.org/tsconfig",
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		// tsup 8.x unconditionally injects the (TS 6.0-deprecated) `baseUrl`
+		// option into its DTS build (see tsup's dist/rollup.js). This relaxed
+		// config is used ONLY by tsup so that the strict tsconfig.json used by
+		// `tsc --noEmit` stays free of deprecations and ready for TS 7.0.
+		"ignoreDeprecations": "6.0"
+	}
+}

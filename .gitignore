@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+
+# Environment / secrets — never commit real .env
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code — local tooling state (plans, generated context stubs).
+# The root CLAUDE.md is the project guide and IS tracked; the per-directory
+# CLAUDE.md files are auto-generated tooling artifacts and are not.
+.claude/
+**/CLAUDE.md
+!/CLAUDE.md
