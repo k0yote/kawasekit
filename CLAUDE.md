@@ -48,11 +48,12 @@ Do NOT add chains beyond this list without discussion.
 - Japanese yen-pegged stablecoin
 - Legally classified as 電子決済手段 (electronic payment instrument) under 改正資金決済法 (revised Payment Services Act)
 - Issued by JPYC Inc., a registered Type II Fund Transfer Service Provider
-- Live chains (as of 2026-05): Ethereum, Polygon, Avalanche
+- Live chains (as of 2026-05): Ethereum, Polygon (mainnet + Amoy testnet), Avalanche
 - Kaia support: in active development (Q2-Q3 2026)
 - 1 JPYC = 1 JPY (always)
 - Supports EIP-3009 (transferWithAuthorization) for gasless transfers
-- JPYC contract address is identical across Ethereum, Polygon, Avalanche:
+- **EIP-3009 implementation does NOT support ERC-1271 (contract signatures)** — `transferWithAuthorization` uses pure `ecrecover` and requires `from` to be an EOA. Smart-account-held JPYC must be transferred via `JPYC.transfer()` in a UserOp (gasless via Paymaster, policy-enforced via Validator). EIP-3009 is for EOA-payer flows (x402, pull-payment), NOT for agent-account transfers.
+- JPYC contract address is identical across Ethereum, Polygon (mainnet + Amoy testnet), Avalanche:
   0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29 (new JPYC, 電子決済手段, 2025-10 launch)
 - Do NOT use old JPYC (0x431D5dfF...) — it's the legacy 前払式支払手段 version
 
@@ -193,4 +194,13 @@ examples/           # in-repo example projects (M3)
   (only with strong justification)
 - esbuild is explicitly allowed in pnpm-workspace.yaml because tsup and tsx depend on it.
 - Adding new postinstall-script dependencies requires an explicit allowlist entry.
+
+## Design Review Discipline
+
+- All M2+ work goes through Plan Mode before implementation
+- AI-generated plans MUST be cross-checked against:
+  - Token contract specifics (e.g., does it use ecrecover vs SignatureChecker?)
+  - AA framework constraints (validator phase semantics)
+  - Existing CLAUDE.md facts (don't override without explicit update)
+- "I don't know" is a valid Plan Mode output that prevents wrong implementation
 

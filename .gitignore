@@ -34,3 +34,6 @@ Thumbs.db
 .claude/
 **/CLAUDE.md
 !/CLAUDE.md
+
+# JPYC reference contracts (license / repo-separation — read-only reference only)
+fiat/
