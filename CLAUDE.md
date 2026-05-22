@@ -63,7 +63,7 @@ Do NOT add chains beyond this list without discussion.
 - **EIP-3009**: `transferWithAuthorization` for gasless ERC-20 transfers
 - **ERC-2612**: `permit` for gasless approvals
 - **EIP-712**: Typed data signing
-- **x402**: HTTP 402 Payment Required protocol (Coinbase, target for v0.2+)
+- **x402**: HTTP 402 Payment Required protocol (Coinbase, target for M3)
 
 ### Kernel (ZeroDev's smart account)
 - Version: v3.1
@@ -160,8 +160,9 @@ examples/           # in-repo example projects (M3)
 ## Roadmap Reference
 
 - M1: Smart account creation on Polygon Amoy + paymaster
-- M2: Spending policy MVP + JPYC transfer via EIP-3009 + x402 handler
+- M2: Spending Policy + JPYC transfer via UserOp (EIP-3009 signing helpers for M3 prep)
 - M3: CLI bootstrap + docs site + 3 example integrations
+  (additionally: x402 handler + Session Key Validator + EIP-3009 native flows)
 - M4: Mainnet, observability, threat model, npm v0.1 release
 - M5: Outreach, first real integration, community
 - M6: Managed service alpha, Rust policy engine experiment
