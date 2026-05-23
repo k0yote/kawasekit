@@ -19,3 +19,35 @@ export {
 	supportedChains,
 	zerodevRpcUrl,
 } from "./chains";
+
+export {
+	type ConfiguredKernelClient,
+	TransferJpycInputError,
+	type TransferJpycParams,
+	type TransferJpycResult,
+	transferJpyc,
+} from "./client/transfer-jpyc";
+
+export {
+	authorizationDeadlineFromNow,
+	type CancelAuthorizationMessage,
+	type Eip3009Domain,
+	generateAuthorizationNonce,
+	type ReceiveWithAuthorizationMessage,
+	type SignedAuthorization,
+	signCancelAuthorization,
+	signReceiveWithAuthorization,
+	signTransferWithAuthorization,
+	type TransferWithAuthorizationMessage,
+} from "./tokens/eip3009";
+
+export {
+	getJpycAddress,
+	JPYC_DECIMALS,
+	JPYC_EIP712_DOMAIN_HINT,
+	JPYC_V2_ADDRESS,
+	type JpycDeployment,
+	JpycNotAvailableError,
+	jpycAbi,
+	jpycDeployments,
+} from "./tokens/jpyc";

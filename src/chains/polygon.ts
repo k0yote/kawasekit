@@ -1,29 +1,24 @@
-import type { Address, Chain } from "viem";
+import type { Chain } from "viem";
 import { polygon as viemPolygon, polygonAmoy as viemPolygonAmoy } from "viem/chains";
 
 /**
  * A viem {@link Chain} extended with kawasekit-specific metadata.
  *
  * All standard chain fields (`id`, `rpcUrls`, `blockExplorers`,
- * `nativeCurrency`, …) are inherited from viem's `Chain`. kawasekit adds the
- * fields it needs to route stablecoin payments.
+ * `nativeCurrency`, …) are inherited from viem's `Chain`. kawasekit adds only
+ * routing flags here; per-token deployment info lives in `src/tokens/`.
  *
  * @example
  * ```ts
  * import { polygon } from "kawasekit";
  *
- * console.log(polygon.id);            // 137
- * console.log(polygon.jpycAddress);   // JPYC contract on Polygon
+ * console.log(polygon.id);          // 137
+ * console.log(polygon.isTestnet);   // false
  * ```
  */
 export interface KawaseChain extends Chain {
 	/** `true` for test networks, `false` for production networks. */
 	readonly isTestnet: boolean;
-	/**
-	 * JPYC stablecoin contract address on this chain, or `null` when JPYC is
-	 * not deployed there (e.g. testnets).
-	 */
-	readonly jpycAddress: Address | null;
 }
 
 /** Base URL of the ZeroDev v3 RPC service. */
@@ -61,19 +56,15 @@ export function zerodevRpcUrl(chain: KawaseChain, projectId: string): string {
 export const polygon = {
 	...viemPolygon,
 	isTestnet: false,
-	// JPYC (電子決済手段, Funds-Transfer type) on Polygon — verified on
-	// PolygonScan: https://polygonscan.com/token/0xe7c3d8c9a439fede00d2600032d5db0be71c3c29
-	jpycAddress: "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
 } satisfies KawaseChain;
 
 /**
- * Polygon Amoy testnet — the primary M1 development target.
+ * Polygon Amoy testnet — the primary kawasekit development target.
  *
- * Built on viem's `polygonAmoy` definition. JPYC is not deployed on Amoy, so
- * {@link KawaseChain.jpycAddress} is `null`.
+ * Built on viem's `polygonAmoy` definition. JPYC is also live on Amoy at the
+ * same address as mainnet; see `src/tokens/jpyc.ts`.
  */
 export const polygonAmoy = {
 	...viemPolygonAmoy,
 	isTestnet: true,
-	jpycAddress: null,
 } satisfies KawaseChain;

@@ -52,7 +52,8 @@
 		"test:watch": "vitest",
 		"lint": "biome check .",
 		"format": "biome format --write .",
-		"m1:create-account": "tsx scripts/01-create-account.ts"
+		"m1:create-account": "tsx scripts/01-create-account.ts",
+		"m2:transfer-jpyc": "tsx scripts/03-transfer-jpyc.ts"
 	},
 	"dependencies": {
 		"@zerodev/ecdsa-validator": "5.4.9",
@@ -65,6 +66,7 @@
 		"@changesets/cli": "^2.31.0",
 		"@types/node": "^22.0.0",
 		"dotenv": "^17.4.2",
+		"prool": "^0.2.4",
 		"tsup": "^8.5.1",
 		"tsx": "^4.22.3",
 		"typescript": "6.0.3",
