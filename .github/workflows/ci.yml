@@ -32,6 +32,14 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
 
+      # Foundry's `anvil` is required by the vitest EIP-3009 integration suite —
+      # `prool` spawns an anvil instance and the beforeAll hook hangs (Hook
+      # timed out in 30000ms) if the binary is missing on the runner.
+      - name: Install Foundry (anvil)
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
