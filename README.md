@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/kawasekit.svg)](https://www.npmjs.com/package/kawasekit)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-🚧 **Status**: Pre-alpha. Built in public. Not yet ready for production use.
+🚧 **Status**: Pre-alpha (M2 milestone — agent-payable JPYC). Built in public. Not yet ready for production use.
 
 ## Vision
 
@@ -17,34 +17,92 @@ Built around modern account abstraction (ERC-4337 / Kernel v3.1) and Japan's fir
 
 ## Roadmap
 
-- [x] **M1**: Smart account skeleton on Polygon Amoy (this release)
-- [ ] **M2**: Spending policy engine + EIP-3009 + x402 handler
-- [ ] **M3**: CLI bootstrap + documentation site + integration examples
+- [x] **M1**: Smart account skeleton on Polygon Amoy
+- [x] **M2**: JPYC transfer via UserOp + EIP-3009 signing helpers + Daily Limit spending policy (this release)
+- [ ] **M3**: CLI bootstrap + docs site + 3 example integrations (x402 handler + Session Key Validator + EIP-3009 native flows)
 - [ ] **M4**: Mainnet support + observability + npm v0.1 release
 - [ ] **M5**: Community building + first real integrations
 - [ ] **M6**: Managed service alpha + Rust policy engine
 
 ## Quick Start
 
-Currently in pre-alpha. The M1 release demonstrates smart account creation on Polygon Amoy.
-
 ```bash
 git clone https://github.com/k0yote/kawasekit.git
 cd kawasekit
 pnpm install
 cp .env.example .env
-# Fill in OWNER_PRIVATE_KEY and ZERODEV_PROJECT_ID
-pnpm tsx scripts/01-create-account.ts
+# Fill in OWNER_PRIVATE_KEY + ZERODEV_PROJECT_ID
+# (M2-3 onward also needs SESSION_KEY_PRIVATE_KEY)
+
+pnpm m1:create-account          # M1: create a Kernel smart account
+pnpm m2:transfer-jpyc           # M2-2: send JPYC.transfer() via UserOp
+pnpm m2:transfer-with-policy    # M2-3: same, gated by Daily Limit policy
 ```
 
-The public API is intentionally minimal until M2:
+The M2 transfer scripts require the smart account to hold JPYC on Polygon Amoy. JPYC on Amoy is mint-controlled with no public faucet today.
+
+### Programmatic use (M2)
 
 ```typescript
-import { polygonAmoy, zerodevRpcUrl, getChain } from "kawasekit";
+import { parseUnits } from "viem";
+import {
+  createAgentSmartAccount,
+  createJpycDailyLimitPolicies,
+  getJpycAddress,
+  JPYC_DECIMALS,
+  polygonAmoy,
+  transferJpyc,
+} from "kawasekit";
 
-const chain = getChain(80002); // Polygon Amoy
-const rpcUrl = zerodevRpcUrl(chain, "your-zerodev-project-id");
+// 1) Build a session-key-gated agent smart account
+const policies = createJpycDailyLimitPolicies({
+  jpycAddress: getJpycAddress(polygonAmoy.id),
+  maxPerTransfer: parseUnits("100", JPYC_DECIMALS),  // 100 JPYC / tx
+  maxTransfersPerDay: 10,                             // 10 tx / day
+});
+
+const account = await createAgentSmartAccount({
+  publicClient,
+  ownerSigner,       // viem LocalAccount — full sudo
+  sessionKeySigner,  // viem LocalAccount — restricted by `policies`
+  policies,
+});
+
+// 2) Send JPYC as a sponsored UserOp
+const { userOpHash, transactionHash } = await transferJpyc(kernelClient, {
+  to: "0xBeef...",
+  amount: parseUnits("50", JPYC_DECIMALS),
+});
 ```
+
+### EIP-3009 EOA-payer signing
+
+```typescript
+import { privateKeyToAccount } from "viem/accounts";
+import {
+  authorizationDeadlineFromNow,
+  generateAuthorizationNonce,
+  JPYC_EIP712_DOMAIN_HINT,
+  signTransferWithAuthorization,
+} from "kawasekit";
+
+const account = privateKeyToAccount("0x...");
+const signed = await signTransferWithAuthorization(
+  account,
+  { ...JPYC_EIP712_DOMAIN_HINT, chainId: 137, verifyingContract: "0xE7C3..." },
+  {
+    from: account.address,
+    to: "0xPayee...",
+    value: parseUnits("100", JPYC_DECIMALS),
+    validAfter: 0n,
+    validBefore: authorizationDeadlineFromNow(300),
+    nonce: generateAuthorizationNonce(),
+  },
+);
+// Pass (signed.v, signed.r, signed.s) to JPYC.transferWithAuthorization on chain.
+```
+
+> ⚠ EIP-3009 cannot be used to spend from a smart account: JPYC's signature check is pure `ecrecover`, so `from` must be an EOA. Agent-controlled smart accounts use `transferJpyc()` instead.
 
 ## Tech Stack
 
@@ -60,11 +118,11 @@ const rpcUrl = zerodevRpcUrl(chain, "your-zerodev-project-id");
 
 | Chain | Status | JPYC |
 |---|---|---|
-| Polygon | M1 | ✅ Live (0xE7C3...c29) |
-| Polygon Amoy (testnet) | M1 | — |
-| Kaia | M2+ | 🚧 In development |
-| Avalanche | M4+ | ✅ Live |
-| Ethereum | M4+ | ✅ Live |
+| Polygon | M2 | ✅ Live (`0xE7C3...c29`) |
+| Polygon Amoy (testnet) | M2 (primary dev target) | ✅ Live (`0xE7C3...c29`, mint-controlled) |
+| Kaia | M3+ | 🚧 In development |
+| Avalanche | M4+ | ✅ Live (`0xE7C3...c29`) |
+| Ethereum | M4+ | ✅ Live (`0xE7C3...c29`) |
 
 ## Why Japan-first
 

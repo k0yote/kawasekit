@@ -23,12 +23,13 @@ disclosure.
 ## Supported Versions
 
 kawasekit is **pre-alpha** software. Until the `0.1.0` release, only the
-latest `main` branch receives security fixes.
+latest `main` branch receives security fixes. Milestone tags
+(`v0.0.0-mN`) are checkpoints — they do **not** receive backported fixes.
 
 | Version | Supported |
 | ------- | --------- |
 | `main` (pre-alpha) | ✅ |
-| Tagged releases | ❌ (none yet) |
+| `v0.0.0-m1`, `v0.0.0-m2`, … (milestone tags) | ❌ (snapshots only) |
 
 ## Scope
 
