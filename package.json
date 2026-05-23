@@ -53,10 +53,12 @@
 		"lint": "biome check .",
 		"format": "biome format --write .",
 		"m1:create-account": "tsx scripts/01-create-account.ts",
-		"m2:transfer-jpyc": "tsx scripts/03-transfer-jpyc.ts"
+		"m2:transfer-jpyc": "tsx scripts/03-transfer-jpyc.ts",
+		"m2:transfer-with-policy": "tsx scripts/04-transfer-with-policy.ts"
 	},
 	"dependencies": {
 		"@zerodev/ecdsa-validator": "5.4.9",
+		"@zerodev/permissions": "5.5.14",
 		"@zerodev/sdk": "5.5.10",
 		"tslib": "2.8.1",
 		"viem": "2.50.4"

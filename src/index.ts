@@ -9,6 +9,10 @@
  */
 
 export {
+	type CreateAgentSmartAccountParams,
+	createAgentSmartAccount,
+} from "./account/session-key";
+export {
 	ChainNotSupportedError,
 	getChain,
 	isSupportedChainId,
@@ -19,7 +23,6 @@ export {
 	supportedChains,
 	zerodevRpcUrl,
 } from "./chains";
-
 export {
 	type ConfiguredKernelClient,
 	TransferJpycInputError,
@@ -27,7 +30,11 @@ export {
 	type TransferJpycResult,
 	transferJpyc,
 } from "./client/transfer-jpyc";
-
+export {
+	type CreateJpycDailyLimitPoliciesParams,
+	createJpycDailyLimitPolicies,
+	ONE_DAY_SECONDS,
+} from "./policy/daily-limit";
 export {
 	authorizationDeadlineFromNow,
 	type CancelAuthorizationMessage,
@@ -40,7 +47,6 @@ export {
 	signTransferWithAuthorization,
 	type TransferWithAuthorizationMessage,
 } from "./tokens/eip3009";
-
 export {
 	getJpycAddress,
 	JPYC_DECIMALS,
