@@ -34,8 +34,20 @@ import { SessionEnvelopeSignerMismatchError } from "./errors";
 export interface RevokeSessionKeyParams {
 	/**
 	 * The owner's sudo Kernel client — the only entity that can call
-	 * `uninstallValidation` on the agent account. Its `account` MUST be the
-	 * same smart account named by `envelope.smartAccountAddress`.
+	 * `uninstallValidation` on the agent account.
+	 *
+	 * **CRITICAL: must be a SUDO-ONLY kernel account** (i.e.
+	 * `createKernelAccount(publicClient, { plugins: { sudo: ecdsaValidator } })`
+	 * — no `regular` plugin). If you pass a client whose account also has the
+	 * session-key permission validator wired as `regular`, ZeroDev signs
+	 * userOps with that validator by default and the spending policy will
+	 * reject `uninstallValidation` at the validation phase (`AA23 reverted`).
+	 *
+	 * The counterfactual smart-account address only depends on the sudo
+	 * validator in Kernel v3.1, so a sudo-only client points at the SAME
+	 * account as one built with both sudo + regular.
+	 *
+	 * Its `account.address` MUST equal `envelope.smartAccountAddress`.
 	 */
 	readonly ownerKernelClient: ConfiguredKernelClient;
 	/** The envelope of the session being revoked. */
@@ -91,10 +103,32 @@ export interface RevokeSessionKeyResult {
  *
  * @example
  * ```ts
+ * import { signerToEcdsaValidator } from "@zerodev/ecdsa-validator";
+ * import { createKernelAccount, createKernelAccountClient } from "@zerodev/sdk";
+ * import { getEntryPoint, KERNEL_V3_1 } from "@zerodev/sdk/constants";
  * import { revokeSessionKey } from "kawasekit";
  *
+ * // Build a SUDO-ONLY kernel account for the owner — see param JSDoc.
+ * const sudoValidator = await signerToEcdsaValidator(publicClient, {
+ *   signer: owner,
+ *   entryPoint: getEntryPoint("0.7"),
+ *   kernelVersion: KERNEL_V3_1,
+ * });
+ * const ownerSudoAccount = await createKernelAccount(publicClient, {
+ *   plugins: { sudo: sudoValidator },
+ *   entryPoint: getEntryPoint("0.7"),
+ *   kernelVersion: KERNEL_V3_1,
+ * });
+ * const ownerKernelClient = createKernelAccountClient({
+ *   account: ownerSudoAccount,
+ *   chain,
+ *   client: publicClient,
+ *   bundlerTransport,
+ *   paymaster,
+ * });
+ *
  * await revokeSessionKey({
- *   ownerKernelClient, // built from owner ECDSA validator, sudo
+ *   ownerKernelClient,
  *   envelope,
  *   sessionKeySigner,
  *   policies: createJpycDailyLimitPolicies({ ... }),

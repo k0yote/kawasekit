@@ -19,11 +19,16 @@
 
 import "dotenv/config";
 
-import { createKernelAccountClient, createZeroDevPaymasterClient } from "@zerodev/sdk";
+import { signerToEcdsaValidator } from "@zerodev/ecdsa-validator";
+import {
+	createKernelAccount,
+	createKernelAccountClient,
+	createZeroDevPaymasterClient,
+} from "@zerodev/sdk";
+import { getEntryPoint, KERNEL_V3_1 } from "@zerodev/sdk/constants";
 import { type Address, createPublicClient, getAddress, type Hex, http, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
-	createAgentSmartAccount,
 	createJpycDailyLimitPolicies,
 	getJpycAddress,
 	issueSessionKey,
@@ -93,11 +98,25 @@ async function main(): Promise<void> {
 	console.log("Smart account:         ", envelope.smartAccountAddress);
 
 	// --- Build the owner-sudo kernel client (sudo only — no regular plugin) ---
-	const ownerSudoAccount = await createAgentSmartAccount({
-		publicClient,
-		ownerSigner: owner,
-		sessionKeySigner: session,
-		policies,
+	//
+	// Critical: revoke MUST go through the sudo (ECDSA) validator, not through
+	// the session-key permission validator. If we passed a regular plugin
+	// here, ZeroDev would default to signing userOps with it, and callPolicy
+	// would reject `uninstallValidation` (since it's not JPYC.transfer) at the
+	// validation phase with `AA23 reverted`. A sudo-only account derives the
+	// SAME counterfactual address (Kernel v3.1 only mixes sudo into init code;
+	// regular is lazy-installed at first use).
+	const entryPoint = getEntryPoint("0.7");
+	const kernelVersion = KERNEL_V3_1;
+	const sudoValidator = await signerToEcdsaValidator(publicClient, {
+		signer: owner,
+		entryPoint,
+		kernelVersion,
+	});
+	const ownerSudoAccount = await createKernelAccount(publicClient, {
+		plugins: { sudo: sudoValidator },
+		entryPoint,
+		kernelVersion,
 	});
 	const paymasterClient = createZeroDevPaymasterClient({
 		chain: polygonAmoy,
