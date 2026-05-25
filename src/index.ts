@@ -129,3 +129,34 @@ export {
 	type X402Version,
 	x402NetworkToChainId,
 } from "./x402/types";
+
+// ---------------------------------------------------------------------------
+// Session-key lifecycle (M3-2)
+// ---------------------------------------------------------------------------
+
+export {
+	KAWASEKIT_SESSION_ENVELOPE_VERSION,
+	type KawasekitSessionEnvelope,
+	type KawasekitSessionEnvelopeVersion,
+	type KawasekitSessionPolicySummary,
+	parseSessionEnvelope,
+	serializeSessionEnvelope,
+} from "./session/envelope";
+export {
+	SessionEnvelopeChainMismatchError,
+	SessionEnvelopeParseError,
+	SessionEnvelopeSignerMismatchError,
+	SessionEnvelopeVersionError,
+} from "./session/errors";
+export { type IssueSessionKeyParams, issueSessionKey } from "./session/issue";
+export { type RestoreSessionAccountParams, restoreSessionAccount } from "./session/restore";
+export {
+	type RevokeSessionKeyParams,
+	type RevokeSessionKeyResult,
+	revokeSessionKey,
+} from "./session/revoke";
+export {
+	type RotateSessionKeyParams,
+	type RotateSessionKeyResult,
+	rotateSessionKey,
+} from "./session/rotate";
