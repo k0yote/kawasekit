@@ -14,11 +14,14 @@
  * Real JPYC moves from the payer's address to the recipient's address on Amoy.
  *
  * Required env:
- *   - OWNER_PRIVATE_KEY              EOA payer (signs EIP-3009; must hold JPYC)
- *   - X402_FACILITATOR_PRIVATE_KEY   EOA gas payer (broadcasts; must hold POL)
+ *   - X402_PAYER_PRIVATE_KEY         EOA payer (signs EIP-3009 off-chain;
+ *                                    must hold JPYC; does NOT broadcast so
+ *                                    POL is not required for this EOA)
+ *   - X402_FACILITATOR_PRIVATE_KEY   EOA gas payer (broadcasts settlement;
+ *                                    must hold POL)
  *
  * Optional env:
- *   - X402_RECIPIENT          Default: OWNER address (loop-back, JPYC stays put)
+ *   - X402_RECIPIENT          Default: payer's own address (loop-back, JPYC stays put)
  *   - X402_AMOUNT_HUMAN       Decimal JPYC per call. Default "0.01"
  *   - POLYGON_AMOY_RPC_URL    Override default https://rpc-amoy.polygon.technology
  *
@@ -77,7 +80,7 @@ function requirePrivateKey(name: string): Hex {
 }
 
 async function main(): Promise<void> {
-	const payerPk = requirePrivateKey("OWNER_PRIVATE_KEY");
+	const payerPk = requirePrivateKey("X402_PAYER_PRIVATE_KEY");
 	const facilitatorPk = requirePrivateKey("X402_FACILITATOR_PRIVATE_KEY");
 	const amountHuman = optionalEnv("X402_AMOUNT_HUMAN") ?? "0.01";
 	const rpcUrl = optionalEnv("POLYGON_AMOY_RPC_URL") ?? polygonAmoy.rpcUrls.default.http[0];
