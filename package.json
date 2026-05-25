@@ -56,7 +56,8 @@
 		"m2:transfer-jpyc": "tsx scripts/03-transfer-jpyc.ts",
 		"m2:transfer-with-policy": "tsx scripts/04-transfer-with-policy.ts",
 		"m2:verify-eip3009-rejects-smart-account": "tsx scripts/05-verify-eip3009-smart-account.ts",
-		"m2:policy-violation": "tsx scripts/06-policy-violation.ts"
+		"m2:policy-violation": "tsx scripts/06-policy-violation.ts",
+		"m3:x402-self-settle": "tsx scripts/07-x402-self-settle.ts"
 	},
 	"dependencies": {
 		"@zerodev/ecdsa-validator": "5.4.9",
@@ -71,10 +72,19 @@
 		"@types/node": "^22.0.0",
 		"@x402/core": "2.13.0",
 		"dotenv": "^17.4.2",
+		"hono": "4.12.22",
 		"prool": "^0.2.4",
 		"tsup": "^8.5.1",
 		"tsx": "^4.22.3",
 		"typescript": "6.0.3",
 		"vitest": "^4.1.7"
+	},
+	"peerDependencies": {
+		"hono": ">=4.10.0"
+	},
+	"peerDependenciesMeta": {
+		"hono": {
+			"optional": true
+		}
 	}
 }
