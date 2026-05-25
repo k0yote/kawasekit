@@ -11,6 +11,7 @@
 	"scripts": {
 		"dev:server": "tsx server/index.ts",
 		"dev:agent": "tsx agent/index.ts",
+		"dev:session-demo": "tsx scripts/session-demo.ts",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {

@@ -23,5 +23,5 @@
 		"noFallthroughCasesInSwitch": true,
 		"noPropertyAccessFromIndexSignature": true
 	},
-	"include": ["server", "agent"]
+	"include": ["server", "agent", "scripts"]
 }

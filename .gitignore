@@ -44,3 +44,7 @@ fiat/
 zenn-*.md
 Xスレッド戦略.md
 
+# Example runtime state — session envelope files written by
+# examples/*/scripts/session-demo.ts and the like.
+.agent-state/
+
