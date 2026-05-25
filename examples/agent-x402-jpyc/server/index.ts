@@ -33,7 +33,7 @@ import {
 	http,
 	parseUnits,
 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { nonceManager, privateKeyToAccount } from "viem/accounts";
 
 function requireEnv(name: string): string {
 	const value = process.env[name];
@@ -65,7 +65,11 @@ if (rpcUrl === undefined) {
 	throw new Error("polygonAmoy.rpcUrls.default.http[0] is undefined; set POLYGON_AMOY_RPC_URL.");
 }
 
-const facilitatorAccount = privateKeyToAccount(facilitatorPk);
+// `nonceManager` makes the facilitator EOA safe for concurrent settle()
+// calls — the LLM agent fans out 3+ fetch_weather tools in parallel, and
+// without local nonce sequencing all of those settle UserOps would race for
+// the same on-chain nonce and only one would land.
+const facilitatorAccount = privateKeyToAccount(facilitatorPk, { nonceManager });
 const transport = http(rpcUrl);
 const publicClient = createPublicClient({ chain: polygonAmoy, transport });
 const facilitatorWallet = createWalletClient({

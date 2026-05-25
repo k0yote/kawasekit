@@ -218,13 +218,24 @@ export interface CreateSelfFacilitatorParams {
  * Intended for self-hosted paywalls and testnet (Polygon Amoy) where the
  * Coinbase CDP facilitator is not guaranteed to support the chain.
  *
+ * **Concurrent settle() calls**: under any meaningful load (e.g. an LLM
+ * agent fan-out) you will issue multiple `transferWithAuthorization`
+ * broadcasts from the same facilitator EOA in parallel. Without local nonce
+ * sequencing those broadcasts race for the same on-chain nonce and only
+ * one lands. Pass viem's `nonceManager` when constructing the facilitator
+ * account to make this safe — see `@example` below.
+ *
  * @example
  * ```ts
  * import { createPublicClient, createWalletClient, http } from "viem";
- * import { privateKeyToAccount } from "viem/accounts";
+ * import { nonceManager, privateKeyToAccount } from "viem/accounts";
  * import { createSelfFacilitator, polygonAmoy } from "kawasekit";
  *
- * const account = privateKeyToAccount(process.env.FACILITATOR_PK as `0x${string}`);
+ * // `nonceManager` is REQUIRED whenever you expect concurrent settlements.
+ * const account = privateKeyToAccount(
+ *   process.env.FACILITATOR_PK as `0x${string}`,
+ *   { nonceManager },
+ * );
  * const transport = http(process.env.RPC_URL);
  * const facilitator = createSelfFacilitator({
  *   walletClient: createWalletClient({ chain: polygonAmoy, transport, account }),
