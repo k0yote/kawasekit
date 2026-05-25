@@ -36,6 +36,36 @@
 				"types": "./dist/index.d.cts",
 				"default": "./dist/index.cjs"
 			}
+		},
+		"./x402": {
+			"import": {
+				"types": "./dist/x402/index.d.ts",
+				"default": "./dist/x402/index.js"
+			},
+			"require": {
+				"types": "./dist/x402/index.d.cts",
+				"default": "./dist/x402/index.cjs"
+			}
+		},
+		"./x402/hono": {
+			"import": {
+				"types": "./dist/x402/hono/index.d.ts",
+				"default": "./dist/x402/hono/index.js"
+			},
+			"require": {
+				"types": "./dist/x402/hono/index.d.cts",
+				"default": "./dist/x402/hono/index.cjs"
+			}
+		},
+		"./session": {
+			"import": {
+				"types": "./dist/session/index.d.ts",
+				"default": "./dist/session/index.js"
+			},
+			"require": {
+				"types": "./dist/session/index.d.cts",
+				"default": "./dist/session/index.cjs"
+			}
 		}
 	},
 	"files": [

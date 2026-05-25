@@ -1,6 +1,14 @@
 # pnpm 11+ reads build-script and other settings from this file
 # (the package.json "pnpm" field is no longer honored).
-#
+
+# Workspace packages. The kawasekit root is published as `kawasekit`; the
+# subdirectories below it under `examples/` are NOT published — they exist so
+# users can `cd examples/<name> && pnpm install && pnpm dev` to see kawasekit
+# in action without touching kawasekit itself.
+packages:
+  - "."
+  - "examples/*"
+
 # esbuild ships a postinstall script that fetches its native binary; it is a
 # transitive dependency of tsup and tsx and must be allowed to build.
 allowBuilds:

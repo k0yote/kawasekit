@@ -1,0 +1,31 @@
+{
+	"name": "agent-x402-jpyc",
+	"private": true,
+	"version": "0.0.0",
+	"description": "kawasekit M3-3 example — Mastra-style agent paying a Hono x402 paywall in JPYC on Polygon Amoy",
+	"license": "Apache-2.0",
+	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
+	"scripts": {
+		"dev:server": "tsx server/index.ts",
+		"dev:agent": "tsx agent/index.ts",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@ai-sdk/anthropic": "3.0.79",
+		"@hono/node-server": "2.0.3",
+		"@mastra/core": "1.36.0",
+		"dotenv": "17.4.2",
+		"hono": "4.12.22",
+		"kawasekit": "workspace:*",
+		"viem": "2.50.4",
+		"zod": "3.25.76"
+	},
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"tsx": "^4.22.3",
+		"typescript": "6.0.3"
+	}
+}
