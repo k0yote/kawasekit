@@ -139,7 +139,11 @@ async function readBalance(account: Address): Promise<bigint> {
 
 describe("createSelfFacilitator — verify happy path", () => {
 	it("returns isValid=true for a well-formed authorization with sufficient balance", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		const paymentPayload = await signPayload(requirements);
 
@@ -155,7 +159,11 @@ describe("createSelfFacilitator — verify happy path", () => {
 
 describe("createSelfFacilitator — verify rejection paths", () => {
 	it("rejects scheme mismatch", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		const paymentPayload = await signPayload(requirements);
 		const bad = { ...requirements, scheme: "permit2" } as unknown as X402PaymentRequirements;
@@ -170,7 +178,11 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 	});
 
 	it("rejects network not matching facilitator chain", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		const paymentPayload = await signPayload(requirements);
 		const onMainnet = { ...requirements, network: "eip155:137" } as X402PaymentRequirements;
@@ -185,7 +197,11 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 	});
 
 	it("rejects value mismatch between requirements and authorization", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		const paymentPayload = await signPayload(requirements);
 		const requirementsAskingMore: X402PaymentRequirements = {
@@ -203,7 +219,11 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 	});
 
 	it("rejects recipient mismatch", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		const paymentPayload = await signPayload(requirements);
 		const swapped: X402PaymentRequirements = { ...requirements, payTo: bob.address };
@@ -218,7 +238,11 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 	});
 
 	it("rejects an expired authorization (validBefore < now)", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		const nonce = generateAuthorizationNonce();
 		const value = parseUnits("10", JPYC_DECIMALS);
@@ -265,7 +289,11 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 	});
 
 	it("rejects a not-yet-valid authorization (validAfter > now)", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		const nonce = generateAuthorizationNonce();
 		const value = parseUnits("10", JPYC_DECIMALS);
@@ -313,7 +341,11 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 	});
 
 	it("rejects an authorization whose signature does not recover to `from`", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		// Sign the same authorization with Bob (the facilitator), then claim
 		// `from = alice`. Recovery yields Bob, which differs from `from`.
@@ -364,7 +396,11 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 	});
 
 	it("rejects when balance is insufficient", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		// Alice has 1000 JPYC from beforeEach; ask for 100_000 JPYC.
 		const requirements = buildJpycRequirements(parseUnits("100000", JPYC_DECIMALS));
 		const paymentPayload = await signPayload(requirements);
@@ -379,7 +415,11 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 	});
 
 	it("rejects a malformed payload (missing signature)", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		const bad: X402PaymentPayload = {
 			x402Version: 2,
@@ -399,7 +439,11 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 
 describe("createSelfFacilitator — settle end-to-end", () => {
 	it("broadcasts transferWithAuthorization and transfers tokens on success", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const value = parseUnits("5", JPYC_DECIMALS);
 		const requirements = buildJpycRequirements(value);
 		const paymentPayload = await signPayload(requirements);
@@ -424,7 +468,11 @@ describe("createSelfFacilitator — settle end-to-end", () => {
 	}, 30_000);
 
 	it("rejects nonce replay after a successful settlement", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("1", JPYC_DECIMALS));
 		const paymentPayload = await signPayload(requirements);
 
@@ -446,7 +494,11 @@ describe("createSelfFacilitator — settle end-to-end", () => {
 	}, 30_000);
 
 	it("returns a failure response without broadcasting when verify rejects", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
 		const paymentPayload = await signPayload(requirements);
 		const requirementsAskingMore: X402PaymentRequirements = {
@@ -467,12 +519,43 @@ describe("createSelfFacilitator — settle end-to-end", () => {
 
 describe("createSelfFacilitator — supported", () => {
 	it("advertises a single (exact, eip155:80002) kind matching the walletClient's chain", async () => {
-		const facilitator = createSelfFacilitator({ walletClient: bobWallet, publicClient });
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
 		const result = await facilitator.supported();
 		expect(result.kinds).toHaveLength(1);
 		expect(result.kinds[0]?.x402Version).toBe(2);
 		expect(result.kinds[0]?.scheme).toBe("exact");
 		expect(result.kinds[0]?.network).toBe("eip155:80002");
 		expect(result.signers["eip155:*"]).toEqual([bob.address]);
+	});
+});
+
+describe("createSelfFacilitator — network mismatch fail-fast", () => {
+	it("throws when network=mainnet but walletClient.chain is Polygon Amoy (testnet)", () => {
+		expect(() =>
+			createSelfFacilitator({ network: "mainnet", walletClient: bobWallet, publicClient }),
+		).toThrow(/is a testnet/);
+	});
+
+	it("throws when network=testnet but walletClient.chain is Polygon mainnet", () => {
+		// Synthesize a mainnet (137) wallet client. createSelfFacilitator's
+		// network check is purely on chain.id, so we never actually broadcast —
+		// any transport satisfies the type.
+		const mainnetChain: Chain = { ...chain, id: 137 };
+		const mainnetWallet = createWalletClient({
+			chain: mainnetChain,
+			transport: http("http://127.0.0.1:0"),
+			account: bob,
+		});
+		expect(() =>
+			createSelfFacilitator({
+				network: "testnet",
+				walletClient: mainnetWallet,
+				publicClient,
+			}),
+		).toThrow(/refusing to broadcast with real funds/);
 	});
 });

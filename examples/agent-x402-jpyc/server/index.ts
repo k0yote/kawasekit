@@ -82,6 +82,7 @@ const jpycAddress = getJpycAddress(polygonAmoy.id);
 const price = parseUnits(priceHuman, JPYC_DECIMALS);
 
 const facilitator = createSelfFacilitator({
+	network: "testnet",
 	walletClient: facilitatorWallet,
 	publicClient,
 });

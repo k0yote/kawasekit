@@ -16,7 +16,7 @@
 
 import type { Account, Address, Chain, Hex, PublicClient, Transport, WalletClient } from "viem";
 import { getAddress, parseSignature, recoverTypedDataAddress } from "viem";
-import { isSupportedChainId, type SupportedChainId } from "../chains";
+import { getChain, isSupportedChainId, type SupportedChainId } from "../chains";
 import { JPYC_EIP712_DOMAIN_HINT, JPYC_V2_ADDRESS, jpycAbi } from "../tokens/jpyc";
 import type {
 	Facilitator,
@@ -194,9 +194,21 @@ function failSettle(
 /** Parameters for {@link createSelfFacilitator}. */
 export interface CreateSelfFacilitatorParams {
 	/**
+	 * Declared production-vs-test intent. MUST agree with `walletClient.chain`:
+	 * - `"mainnet"` requires a kawasekit chain with `isTestnet === false`.
+	 * - `"testnet"` requires a kawasekit chain with `isTestnet === true`.
+	 *
+	 * The check is enforced at construction time and throws a fatal error on
+	 * disagreement. The point is to make accidentally pointing a testnet
+	 * configuration at a mainnet RPC (or vice versa) impossible — that mistake
+	 * would broadcast real-fund transactions silently.
+	 */
+	readonly network: "mainnet" | "testnet";
+	/**
 	 * Pre-configured wallet client that broadcasts settlement transactions.
 	 * The bound account pays gas. `walletClient.chain.id` determines the only
-	 * chain this facilitator serves.
+	 * chain this facilitator serves, and `walletClient.chain.isTestnet` MUST
+	 * agree with the declared {@link network}.
 	 */
 	readonly walletClient: WalletClient<Transport, Chain, Account>;
 	/**
@@ -238,6 +250,7 @@ export interface CreateSelfFacilitatorParams {
  * );
  * const transport = http(process.env.RPC_URL);
  * const facilitator = createSelfFacilitator({
+ *   network: "testnet", // must agree with polygonAmoy.isTestnet === true
  *   walletClient: createWalletClient({ chain: polygonAmoy, transport, account }),
  *   publicClient: createPublicClient({ chain: polygonAmoy, transport }),
  * });
@@ -253,6 +266,17 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 		);
 	}
 	const supportedChainId: SupportedChainId = facilitatorChainId;
+	const chain = getChain(supportedChainId);
+	if (params.network === "mainnet" && chain.isTestnet) {
+		throw new Error(
+			`createSelfFacilitator: network="mainnet" but walletClient.chain "${chain.name}" (chainId ${supportedChainId}) is a testnet`,
+		);
+	}
+	if (params.network === "testnet" && !chain.isTestnet) {
+		throw new Error(
+			`createSelfFacilitator: network="testnet" but walletClient.chain "${chain.name}" (chainId ${supportedChainId}) is a mainnet — refusing to broadcast with real funds`,
+		);
+	}
 	const network = chainIdToX402Network(supportedChainId);
 
 	async function verifyInternal(req: X402VerifyRequest): Promise<X402VerifyResponse> {

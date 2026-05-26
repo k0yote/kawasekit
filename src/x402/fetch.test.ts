@@ -77,7 +77,7 @@ function paywallHandler(opts: {
 
 describe("wrapFetch — pass-through", () => {
 	it("returns a non-402 response as-is without invoking the signer", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const signSpy = vi.spyOn(signer, "sign");
 
 		await withHttpListener(
@@ -96,7 +96,7 @@ describe("wrapFetch — pass-through", () => {
 	});
 
 	it("returns the 402 unchanged when accepts is empty", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		await withHttpListener(
 			paywallHandler({ payload: { ...build402(), accepts: [] } }),
 			async (baseUrl) => {
@@ -108,7 +108,7 @@ describe("wrapFetch — pass-through", () => {
 	});
 
 	it("returns the 402 unchanged when the body has no parseable PAYMENT-REQUIRED", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		await withHttpListener(
 			async (_req, res) => {
 				res.statusCode = 402;
@@ -126,7 +126,7 @@ describe("wrapFetch — pass-through", () => {
 
 describe("wrapFetch — sign-and-retry happy path", () => {
 	it("signs the chosen requirements and retries with PAYMENT-SIGNATURE", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		let capturedSignature = "";
 
 		await withHttpListener(
@@ -149,7 +149,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 	});
 
 	it("falls back to parsing the body when PAYMENT-REQUIRED header is absent", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		await withHttpListener(
 			paywallHandler({ includeHeader: false, includeBody: true }),
 			async (baseUrl) => {
@@ -161,7 +161,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 	});
 
 	it("preserves PAYMENT-RESPONSE header from the success response", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		await withHttpListener(paywallHandler({}), async (baseUrl) => {
 			const fetch402 = wrapFetch({ signer });
 			const res = await fetch402(`${baseUrl}/weather`);
@@ -170,7 +170,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 	});
 
 	it("preserves request method on retry", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		let retryMethod = "";
 		await withHttpListener(
 			paywallHandler({
@@ -191,7 +191,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 	});
 
 	it("preserves request body on retry", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		let retryBody = "";
 		await withHttpListener(
 			paywallHandler({
@@ -212,7 +212,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 	});
 
 	it("preserves caller-supplied headers and merges PAYMENT-SIGNATURE alongside", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		let retryAuthHeader = "";
 		await withHttpListener(
 			async (req, res) => {
@@ -236,7 +236,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 	});
 
 	it("echoes the server's resource info back inside the signed payload", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const payload = build402();
 		let echoed: X402PaymentPayload["resource"];
 		await withHttpListener(
@@ -262,7 +262,7 @@ describe("wrapFetch — selectRequirements policy", () => {
 	it("uses the caller-supplied selector to pick a non-first entry", async () => {
 		const cheap: X402PaymentRequirements = { ...REQS, amount: "1000" };
 		const expensive: X402PaymentRequirements = { ...REQS, amount: "100000" };
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		let chosenAmount = "";
 		await withHttpListener(
 			paywallHandler({
@@ -285,7 +285,7 @@ describe("wrapFetch — selectRequirements policy", () => {
 	});
 
 	it("aborts the retry when selectRequirements returns null", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const signSpy = vi.spyOn(signer, "sign");
 		await withHttpListener(paywallHandler({}), async (baseUrl) => {
 			const fetch402 = wrapFetch({ signer, selectRequirements: () => null });
@@ -298,7 +298,7 @@ describe("wrapFetch — selectRequirements policy", () => {
 
 describe("wrapFetch — onPayment hook", () => {
 	it("is called with chosen requirements and parsed 402 body", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		let captured: {
 			requirements: X402PaymentRequirements;
 			paymentRequired: X402PaymentRequiredResponse;
@@ -319,7 +319,7 @@ describe("wrapFetch — onPayment hook", () => {
 	});
 
 	it("aborts the retry when onPayment returns false (budget guard)", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const signSpy = vi.spyOn(signer, "sign");
 		await withHttpListener(paywallHandler({}), async (baseUrl) => {
 			const fetch402 = wrapFetch({ signer, onPayment: () => false });
@@ -332,7 +332,7 @@ describe("wrapFetch — onPayment hook", () => {
 
 describe("wrapFetch — custom fetch", () => {
 	it("uses the caller-supplied fetch implementation", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const customFetch = vi.fn(globalThis.fetch);
 		await withHttpListener(paywallHandler({}), async (baseUrl) => {
 			const fetch402 = wrapFetch({ signer, fetch: customFetch });

@@ -18,7 +18,7 @@
 
 import type { Account, Address } from "viem";
 import { getAddress, isAddress } from "viem";
-import { isSupportedChainId } from "../chains";
+import { getChain, isSupportedChainId } from "../chains";
 import {
 	authorizationDeadlineFromNow,
 	generateAuthorizationNonce,
@@ -59,6 +59,15 @@ export interface X402TokenDomain {
 
 /** Parameters for {@link createX402PaymentSigner}. */
 export interface CreateX402PaymentSignerParams {
+	/**
+	 * Declared production-vs-test intent. Each `sign()` call verifies that
+	 * `paymentRequirements.network` resolves to a chain whose `isTestnet`
+	 * agrees with this value, and throws otherwise. The point is to refuse
+	 * to sign a real-funds payment when the signer was configured for testnet
+	 * (e.g. the server unexpectedly demanded `polygon-mainnet` instead of
+	 * `polygon-amoy`).
+	 */
+	readonly network: "mainnet" | "testnet";
 	/**
 	 * EOA / LocalAccount that signs the EIP-3009 `TransferWithAuthorization`.
 	 * MUST be the same address the requirements' `from` will name.
@@ -209,14 +218,14 @@ function validateRequirements(requirements: X402PaymentRequirements): {
  * import { createX402PaymentSigner } from "kawasekit";
  *
  * const account = privateKeyToAccount("0x...");
- * const signer = createX402PaymentSigner({ account });
+ * const signer = createX402PaymentSigner({ network: "testnet", account });
  *
  * // ...after receiving a 402 with PAYMENT-REQUIRED header...
  * const paymentPayload = await signer.sign({ paymentRequirements });
  * ```
  */
 export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): X402PaymentSigner {
-	const { account } = params;
+	const { account, network } = params;
 	const defaultLifetimeSeconds =
 		params.defaultLifetimeSeconds ?? X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS;
 	if (defaultLifetimeSeconds <= 0) {
@@ -232,6 +241,19 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 		async sign(signParams) {
 			const { paymentRequirements } = signParams;
 			const { chainId, value, asset, payTo } = validateRequirements(paymentRequirements);
+			const chain = getChain(chainId);
+			if (network === "mainnet" && chain.isTestnet) {
+				throw new X402InvalidPayloadError(
+					"PaymentRequirements",
+					`signer was configured for network="mainnet" but requirements.network="${paymentRequirements.network}" (chainId ${chainId}) is a testnet`,
+				);
+			}
+			if (network === "testnet" && !chain.isTestnet) {
+				throw new X402InvalidPayloadError(
+					"PaymentRequirements",
+					`signer was configured for network="testnet" but requirements.network="${paymentRequirements.network}" (chainId ${chainId}) is a mainnet — refusing to sign payment for real funds`,
+				);
+			}
 			const domain = resolveDomain(paymentRequirements, domainOverride);
 
 			const lifetime = Math.min(defaultLifetimeSeconds, paymentRequirements.maxTimeoutSeconds);

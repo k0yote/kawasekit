@@ -24,7 +24,7 @@ const JPYC_REQ: X402PaymentRequirements = {
 
 describe("createX402PaymentSigner — happy path", () => {
 	it("returns a payment payload with all wire-format fields populated", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const payload = await signer.sign({ paymentRequirements: JPYC_REQ });
 
 		expect(payload.x402Version).toBe(2);
@@ -51,7 +51,7 @@ describe("createX402PaymentSigner — happy path", () => {
 	});
 
 	it("produces an EIP-3009 signature that recovers to the signer account", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const payload = await signer.sign({ paymentRequirements: JPYC_REQ });
 		const exact = payload.payload as {
 			signature: `0x${string}`;
@@ -97,7 +97,7 @@ describe("createX402PaymentSigner — happy path", () => {
 	});
 
 	it("generates a unique nonce per sign() call", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const a = await signer.sign({ paymentRequirements: JPYC_REQ });
 		const b = await signer.sign({ paymentRequirements: JPYC_REQ });
 		const nonceA = (a.payload as { authorization: { nonce: string } }).authorization.nonce;
@@ -106,14 +106,14 @@ describe("createX402PaymentSigner — happy path", () => {
 	});
 
 	it("exposes the signing address", () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		expect(getAddress(signer.address)).toBe(getAddress(account.address));
 	});
 });
 
 describe("createX402PaymentSigner — validity window", () => {
 	it("defaults validBefore to now + min(default, maxTimeoutSeconds)", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const before = Math.floor(Date.now() / 1000);
 		const payload = await signer.sign({ paymentRequirements: JPYC_REQ });
 		const after = Math.floor(Date.now() / 1000);
@@ -129,7 +129,11 @@ describe("createX402PaymentSigner — validity window", () => {
 	});
 
 	it("respects signer-level defaultLifetimeSeconds when smaller than maxTimeoutSeconds", async () => {
-		const signer = createX402PaymentSigner({ account, defaultLifetimeSeconds: 10 });
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account,
+			defaultLifetimeSeconds: 10,
+		});
 		const longerReq: X402PaymentRequirements = { ...JPYC_REQ, maxTimeoutSeconds: 3600 };
 		const before = Math.floor(Date.now() / 1000);
 		const payload = await signer.sign({ paymentRequirements: longerReq });
@@ -140,7 +144,7 @@ describe("createX402PaymentSigner — validity window", () => {
 	});
 
 	it("respects per-call validAfter / validBefore overrides", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const payload = await signer.sign({
 			paymentRequirements: JPYC_REQ,
 			validAfter: 100n,
@@ -153,7 +157,7 @@ describe("createX402PaymentSigner — validity window", () => {
 	});
 
 	it("rejects validBefore <= validAfter", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		await expect(
 			signer.sign({
 				paymentRequirements: JPYC_REQ,
@@ -166,7 +170,7 @@ describe("createX402PaymentSigner — validity window", () => {
 
 describe("createX402PaymentSigner — EIP-712 domain resolution", () => {
 	it("prefers paymentRequirements.extra.name / .version", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const reqWithCustomDomain: X402PaymentRequirements = {
 			...JPYC_REQ,
 			extra: { name: "Acme USD", version: "42" },
@@ -216,6 +220,7 @@ describe("createX402PaymentSigner — EIP-712 domain resolution", () => {
 
 	it("uses domainOverride when provided, ignoring extra", async () => {
 		const signer = createX402PaymentSigner({
+			network: "testnet",
 			account,
 			domainOverride: { name: "JPY Coin", version: "1" },
 		});
@@ -268,14 +273,14 @@ describe("createX402PaymentSigner — EIP-712 domain resolution", () => {
 	});
 
 	it("falls back to JPYC_EIP712_DOMAIN_HINT when asset is JPYC and extra has no name/version", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const bareJpyc: X402PaymentRequirements = { ...JPYC_REQ, extra: {} };
 		// Should not throw — fall back path is exercised.
 		await expect(signer.sign({ paymentRequirements: bareJpyc })).resolves.toBeDefined();
 	});
 
 	it("throws when extra lacks name/version and asset is not JPYC", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const otherToken: X402PaymentRequirements = {
 			...JPYC_REQ,
 			asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // USDC on Base Sepolia
@@ -289,7 +294,7 @@ describe("createX402PaymentSigner — EIP-712 domain resolution", () => {
 
 describe("createX402PaymentSigner — requirements validation", () => {
 	it("throws on unsupported scheme", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const bad = { ...JPYC_REQ, scheme: "permit2" } as unknown as X402PaymentRequirements;
 		await expect(signer.sign({ paymentRequirements: bad })).rejects.toBeInstanceOf(
 			X402InvalidPayloadError,
@@ -297,7 +302,7 @@ describe("createX402PaymentSigner — requirements validation", () => {
 	});
 
 	it("throws on amount that is not a decimal string", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const cases = ["", "0x10", "1.5", "-100", " 100 ", "01"];
 		for (const amount of cases) {
 			const bad: X402PaymentRequirements = { ...JPYC_REQ, amount };
@@ -308,7 +313,7 @@ describe("createX402PaymentSigner — requirements validation", () => {
 	});
 
 	it("throws on amount === 0", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const bad: X402PaymentRequirements = { ...JPYC_REQ, amount: "0" };
 		await expect(signer.sign({ paymentRequirements: bad })).rejects.toBeInstanceOf(
 			X402InvalidPayloadError,
@@ -316,7 +321,7 @@ describe("createX402PaymentSigner — requirements validation", () => {
 	});
 
 	it("throws on amount > uint256 max", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const overflow = `1${"0".repeat(78)}`; // 10^78 > 2^256-1
 		const bad: X402PaymentRequirements = { ...JPYC_REQ, amount: overflow };
 		await expect(signer.sign({ paymentRequirements: bad })).rejects.toBeInstanceOf(
@@ -325,7 +330,7 @@ describe("createX402PaymentSigner — requirements validation", () => {
 	});
 
 	it("throws on maxTimeoutSeconds <= 0", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const bad: X402PaymentRequirements = { ...JPYC_REQ, maxTimeoutSeconds: 0 };
 		await expect(signer.sign({ paymentRequirements: bad })).rejects.toBeInstanceOf(
 			X402InvalidPayloadError,
@@ -333,7 +338,7 @@ describe("createX402PaymentSigner — requirements validation", () => {
 	});
 
 	it("throws on bad asset address", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const bad = { ...JPYC_REQ, asset: "0xdeadbeef" } as unknown as X402PaymentRequirements;
 		await expect(signer.sign({ paymentRequirements: bad })).rejects.toBeInstanceOf(
 			X402InvalidPayloadError,
@@ -341,7 +346,7 @@ describe("createX402PaymentSigner — requirements validation", () => {
 	});
 
 	it("throws on bad payTo address", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const bad = { ...JPYC_REQ, payTo: "not-an-address" } as unknown as X402PaymentRequirements;
 		await expect(signer.sign({ paymentRequirements: bad })).rejects.toBeInstanceOf(
 			X402InvalidPayloadError,
@@ -349,7 +354,7 @@ describe("createX402PaymentSigner — requirements validation", () => {
 	});
 
 	it("rejects unsupported network (eip155:1 — Ethereum mainnet, not in supportedChains)", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const bad = { ...JPYC_REQ, network: "eip155:1" } as unknown as X402PaymentRequirements;
 		await expect(signer.sign({ paymentRequirements: bad })).rejects.toBeInstanceOf(
 			X402InvalidPayloadError,
@@ -357,22 +362,53 @@ describe("createX402PaymentSigner — requirements validation", () => {
 	});
 
 	it("throws on signer with defaultLifetimeSeconds <= 0", () => {
-		expect(() => createX402PaymentSigner({ account, defaultLifetimeSeconds: 0 })).toThrow(
+		expect(() =>
+			createX402PaymentSigner({ network: "testnet", account, defaultLifetimeSeconds: 0 }),
+		).toThrow(X402InvalidPayloadError);
+	});
+});
+
+describe("createX402PaymentSigner — network mismatch fail-fast", () => {
+	const POLYGON_MAINNET_REQ: X402PaymentRequirements = {
+		...JPYC_REQ,
+		network: "eip155:137",
+	};
+
+	it("throws when signer=testnet receives mainnet requirements", async () => {
+		const signer = createX402PaymentSigner({ network: "testnet", account });
+		await expect(signer.sign({ paymentRequirements: POLYGON_MAINNET_REQ })).rejects.toBeInstanceOf(
 			X402InvalidPayloadError,
 		);
+		await expect(signer.sign({ paymentRequirements: POLYGON_MAINNET_REQ })).rejects.toThrow(
+			/refusing to sign payment for real funds/,
+		);
+	});
+
+	it("throws when signer=mainnet receives testnet requirements", async () => {
+		const signer = createX402PaymentSigner({ network: "mainnet", account });
+		await expect(signer.sign({ paymentRequirements: JPYC_REQ })).rejects.toBeInstanceOf(
+			X402InvalidPayloadError,
+		);
+		await expect(signer.sign({ paymentRequirements: JPYC_REQ })).rejects.toThrow(/is a testnet/);
+	});
+
+	it("accepts matching signer=mainnet + mainnet requirements", async () => {
+		const signer = createX402PaymentSigner({ network: "mainnet", account });
+		const payload = await signer.sign({ paymentRequirements: POLYGON_MAINNET_REQ });
+		expect(payload.accepted.network).toBe("eip155:137");
 	});
 });
 
 describe("createX402PaymentSigner — resource echo", () => {
 	it("includes resource in payload when provided", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const resource = { url: "https://api.example.com/weather", description: "weather" };
 		const payload = await signer.sign({ paymentRequirements: JPYC_REQ, resource });
 		expect(payload.resource).toEqual(resource);
 	});
 
 	it("omits resource entirely when not provided (matches exactOptionalPropertyTypes)", async () => {
-		const signer = createX402PaymentSigner({ account });
+		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const payload = await signer.sign({ paymentRequirements: JPYC_REQ });
 		expect("resource" in payload).toBe(false);
 	});

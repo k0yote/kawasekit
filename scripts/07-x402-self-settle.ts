@@ -150,6 +150,7 @@ async function main(): Promise<void> {
 
 	// Build the kawasekit server-side stack.
 	const facilitator = createSelfFacilitator({
+		network: "testnet",
 		walletClient: facilitatorWallet,
 		publicClient,
 	});
@@ -214,7 +215,7 @@ async function main(): Promise<void> {
 	console.log("\nLocal paywall server:  ", baseUrl);
 
 	// Build the kawasekit client-side stack.
-	const signer = createX402PaymentSigner({ account: payer });
+	const signer = createX402PaymentSigner({ network: "testnet", account: payer });
 	const fetch402 = wrapFetch({
 		signer,
 		onPayment: (req) => {
