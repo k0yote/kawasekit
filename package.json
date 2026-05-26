@@ -89,7 +89,8 @@
 		"m2:policy-violation": "tsx scripts/06-policy-violation.ts",
 		"m3:x402-self-settle": "tsx scripts/07-x402-self-settle.ts",
 		"m3:session-issue-restore": "tsx scripts/09-session-issue-restore.ts",
-		"m3:session-revoke": "tsx scripts/10-session-revoke.ts"
+		"m3:session-revoke": "tsx scripts/10-session-revoke.ts",
+		"m4:mainnet-self-settle": "tsx scripts/11-mainnet-self-settle.ts"
 	},
 	"dependencies": {
 		"@zerodev/ecdsa-validator": "5.4.9",
