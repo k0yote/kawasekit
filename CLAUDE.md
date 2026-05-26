@@ -203,5 +203,6 @@ examples/           # in-repo example projects (M3)
   - Token contract specifics (e.g., does it use ecrecover vs SignatureChecker?)
   - AA framework constraints (validator phase semantics)
   - Existing CLAUDE.md facts (don't override without explicit update)
+  - External community feedback when received (Twitter, Zenn comments, GitHub issues, etc.); if the point is technically sound, record it in `.claude/m<N>-features-candidates.md` and evaluate at the next kickoff
 - "I don't know" is a valid Plan Mode output that prevents wrong implementation
 
