@@ -233,7 +233,7 @@ For now, feedback, issues, and discussions are the most valuable contributions.
 
 ## Security
 
-Report security issues privately to **security@k0yote.dev**. See [SECURITY.md](./SECURITY.md) for the full disclosure policy.
+Report security issues privately to **security@k0yote.dev**. See [SECURITY.md](./SECURITY.md) for the disclosure policy, and [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md) for the layer-by-layer threat model used by external reviewers.
 
 This SDK handles signing credentials and constructs financial operations. While the architecture avoids holding user funds, integration mistakes can still result in financial loss. Audit and test thoroughly before any mainnet usage.
 
