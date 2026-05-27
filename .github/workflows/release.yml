@@ -38,6 +38,15 @@ jobs:
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
 
+      # The vitest integration suite (test/eip3009.test.ts and
+      # src/x402/facilitator.self.test.ts) spawns anvil via prool. Without
+      # Foundry on the runner, the beforeAll hook times out after 30s with
+      # "Hook timed out in 30000ms". Mirrors the same step in ci.yml.
+      - name: Install Foundry (anvil)
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

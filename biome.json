@@ -6,7 +6,16 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!dist", "!**/node_modules", "!test/fixtures"]
+		"includes": [
+			"**",
+			"!dist",
+			"!**/node_modules",
+			"!test/fixtures",
+			"!.changeset/*.json",
+			"!docs/dist",
+			"!docs/.astro",
+			"!docs/src/content/docs/api"
+		]
 	},
 	"formatter": {
 		"enabled": true,
