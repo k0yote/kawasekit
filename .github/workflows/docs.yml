@@ -57,6 +57,11 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Self-bootstrap: enable Pages on first run instead of failing if
+          # the operator hasn't toggled "Settings → Pages → GitHub Actions"
+          # manually beforehand.
+          enablement: true
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
