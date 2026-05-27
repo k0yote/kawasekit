@@ -9,6 +9,7 @@ export default defineConfig({
 		"src/observability/index.ts",
 		"src/observability/prometheus/index.ts",
 		"src/observability/otlp/index.ts",
+		"cli/index.ts",
 	],
 	format: ["esm", "cjs"],
 	// Build-only tsconfig — see tsconfig.build.json for why it is separate.

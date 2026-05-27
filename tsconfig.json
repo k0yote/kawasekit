@@ -30,5 +30,5 @@
 		"noFallthroughCasesInSwitch": true,
 		"noPropertyAccessFromIndexSignature": true
 	},
-	"include": ["src", "scripts", "test", "tsup.config.ts", "vitest.config.ts"]
+	"include": ["src", "scripts", "test", "cli", "tsup.config.ts", "vitest.config.ts"]
 }

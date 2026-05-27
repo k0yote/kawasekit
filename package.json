@@ -26,6 +26,9 @@
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"bin": {
+		"kawasekit": "./dist/cli/index.cjs"
+	},
 	"exports": {
 		".": {
 			"import": {
@@ -121,12 +124,14 @@
 		"m3:session-issue-restore": "tsx scripts/09-session-issue-restore.ts",
 		"m3:session-revoke": "tsx scripts/10-session-revoke.ts",
 		"m4:mainnet-self-settle": "tsx scripts/11-mainnet-self-settle.ts",
-		"m4:mainnet-session-flow": "tsx scripts/12-mainnet-session-flow.ts"
+		"m4:mainnet-session-flow": "tsx scripts/12-mainnet-session-flow.ts",
+		"cli": "tsx cli/index.ts"
 	},
 	"dependencies": {
 		"@zerodev/ecdsa-validator": "5.4.9",
 		"@zerodev/permissions": "5.5.14",
 		"@zerodev/sdk": "5.5.10",
+		"commander": "13.1.0",
 		"tslib": "2.8.1",
 		"viem": "2.50.4"
 	},
