@@ -1,0 +1,81 @@
+groups:
+  - name: kawasekit
+    interval: 30s
+    rules:
+      # ---------------------------------------------------------------------
+      # Verify failure rate
+      # ---------------------------------------------------------------------
+      - alert: KawasekitVerifyFailureRateHigh
+        expr: |
+          (
+            sum by (network) (rate(kawasekit_verify_total{result="failure"}[5m]))
+            /
+            clamp_min(sum by (network) (rate(kawasekit_verify_total[5m])), 1e-9)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than half of verify() calls are failing on {{ $labels.network }}"
+          description: |
+            5-minute failure ratio of facilitator verify() exceeds 50% on
+            {{ $labels.network }}. Common causes: malformed payloads from a
+            buggy client, signature recovery mismatches, or insufficient
+            payer balance. Drill into kawasekit_verify_total by reason.
+
+      # ---------------------------------------------------------------------
+      # Settle failure rate
+      # ---------------------------------------------------------------------
+      - alert: KawasekitSettleFailureRateHigh
+        expr: |
+          (
+            sum by (network) (rate(kawasekit_settle_total{result="failure"}[5m]))
+            /
+            clamp_min(sum by (network) (rate(kawasekit_settle_total[5m])), 1e-9)
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Settle failure rate above 20% on {{ $labels.network }}"
+          description: |
+            Settle is the broadcast step — sustained failure usually means
+            the facilitator EOA is out of POL gas, the bundler is rejecting
+            our transactions, or the RPC endpoint is degraded.
+
+      # ---------------------------------------------------------------------
+      # Settle latency
+      # ---------------------------------------------------------------------
+      - alert: KawasekitSettleLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, network) (rate(kawasekit_settle_duration_ms_bucket[5m]))
+          ) > 30000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Settle p99 latency above 30s on {{ $labels.network }}"
+          description: |
+            99th percentile of facilitator settle() exceeded 30s for 10m.
+            Likely chain congestion, bundler queue depth, or under-provisioned
+            RPC. Check the underlying RPC provider's status page.
+
+      # ---------------------------------------------------------------------
+      # Client retry storm
+      # ---------------------------------------------------------------------
+      - alert: KawasekitClientPaymentDeclineRateHigh
+        expr: |
+          sum(rate(kawasekit_client_payment_total{result="failure",reason="onPayment_declined"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "wrapFetch budget guard declining more than 1 payment/sec"
+          description: |
+            Client-side onPayment guard rejected >1 paywall hit/sec sustained
+            5m. Either the agent's intended budget was tighter than its actual
+            usage (good — the guard is working) or the agent is in a retry
+            loop on a request it cannot pay for. Inspect the agent's prompt
+            chain and budget envelope.

@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+rule_files:
+  - /etc/prometheus/rules/kawasekit-alerts.yml
+
+scrape_configs:
+  - job_name: kawasekit
+    static_configs:
+      - targets:
+          # The kawasekit demo server runs on the host network (started via
+          # `pnpm dev`). `host.docker.internal` is the standard Docker Desktop
+          # alias and is also wired through `extra_hosts` in docker-compose.yml
+          # for Linux compatibility.
+          - host.docker.internal:3001
+        labels:
+          service: kawasekit-demo

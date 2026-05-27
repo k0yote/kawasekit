@@ -1,0 +1,204 @@
+{
+	"annotations": { "list": [] },
+	"editable": true,
+	"fiscalYearStartMonth": 0,
+	"graphTooltip": 1,
+	"id": null,
+	"links": [],
+	"liveNow": false,
+	"panels": [
+		{
+			"type": "row",
+			"title": "Facilitator",
+			"gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+			"id": 100,
+			"collapsed": false,
+			"panels": []
+		},
+		{
+			"id": 1,
+			"title": "verify rate (per network, by result)",
+			"type": "timeseries",
+			"gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+			"datasource": { "type": "prometheus", "uid": "prometheus" },
+			"targets": [
+				{
+					"expr": "sum by (network, result) (rate(kawasekit_verify_total[1m]))",
+					"legendFormat": "{{network}} / {{result}}",
+					"refId": "A"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "ops",
+					"custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10 }
+				},
+				"overrides": []
+			},
+			"options": { "legend": { "showLegend": true, "placement": "bottom" } }
+		},
+		{
+			"id": 2,
+			"title": "settle rate (per network, by result)",
+			"type": "timeseries",
+			"gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+			"datasource": { "type": "prometheus", "uid": "prometheus" },
+			"targets": [
+				{
+					"expr": "sum by (network, result) (rate(kawasekit_settle_total[1m]))",
+					"legendFormat": "{{network}} / {{result}}",
+					"refId": "A"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "ops",
+					"custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10 }
+				},
+				"overrides": []
+			},
+			"options": { "legend": { "showLegend": true, "placement": "bottom" } }
+		},
+		{
+			"id": 3,
+			"title": "verify duration p50/p95/p99 (ms)",
+			"type": "timeseries",
+			"gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+			"datasource": { "type": "prometheus", "uid": "prometheus" },
+			"targets": [
+				{
+					"expr": "histogram_quantile(0.5, sum by (le) (rate(kawasekit_verify_duration_ms_bucket[5m])))",
+					"legendFormat": "p50",
+					"refId": "A"
+				},
+				{
+					"expr": "histogram_quantile(0.95, sum by (le) (rate(kawasekit_verify_duration_ms_bucket[5m])))",
+					"legendFormat": "p95",
+					"refId": "B"
+				},
+				{
+					"expr": "histogram_quantile(0.99, sum by (le) (rate(kawasekit_verify_duration_ms_bucket[5m])))",
+					"legendFormat": "p99",
+					"refId": "C"
+				}
+			],
+			"fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+		},
+		{
+			"id": 4,
+			"title": "settle duration p50/p95/p99 (ms)",
+			"type": "timeseries",
+			"gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+			"datasource": { "type": "prometheus", "uid": "prometheus" },
+			"targets": [
+				{
+					"expr": "histogram_quantile(0.5, sum by (le) (rate(kawasekit_settle_duration_ms_bucket[5m])))",
+					"legendFormat": "p50",
+					"refId": "A"
+				},
+				{
+					"expr": "histogram_quantile(0.95, sum by (le) (rate(kawasekit_settle_duration_ms_bucket[5m])))",
+					"legendFormat": "p95",
+					"refId": "B"
+				},
+				{
+					"expr": "histogram_quantile(0.99, sum by (le) (rate(kawasekit_settle_duration_ms_bucket[5m])))",
+					"legendFormat": "p99",
+					"refId": "C"
+				}
+			],
+			"fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+		},
+		{
+			"type": "row",
+			"title": "Handler",
+			"gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+			"id": 200,
+			"collapsed": false,
+			"panels": []
+		},
+		{
+			"id": 5,
+			"title": "payment_required vs payment_accepted (rate/sec)",
+			"type": "timeseries",
+			"gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+			"datasource": { "type": "prometheus", "uid": "prometheus" },
+			"targets": [
+				{
+					"expr": "sum(rate(kawasekit_payment_required_total[1m]))",
+					"legendFormat": "402 returned",
+					"refId": "A"
+				},
+				{
+					"expr": "sum(rate(kawasekit_payment_accepted_total[1m]))",
+					"legendFormat": "settled + handler ran",
+					"refId": "B"
+				}
+			],
+			"fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+		},
+		{
+			"id": 6,
+			"title": "verify failure reason breakdown",
+			"type": "barchart",
+			"gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+			"datasource": { "type": "prometheus", "uid": "prometheus" },
+			"targets": [
+				{
+					"expr": "sum by (reason) (increase(kawasekit_verify_total{result=\"failure\"}[1h]))",
+					"legendFormat": "{{reason}}",
+					"refId": "A"
+				}
+			],
+			"fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+		},
+		{
+			"type": "row",
+			"title": "Client",
+			"gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+			"id": 300,
+			"collapsed": false,
+			"panels": []
+		},
+		{
+			"id": 7,
+			"title": "client_payment rate (by result)",
+			"type": "timeseries",
+			"gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+			"datasource": { "type": "prometheus", "uid": "prometheus" },
+			"targets": [
+				{
+					"expr": "sum by (result) (rate(kawasekit_client_payment_total[1m]))",
+					"legendFormat": "{{result}}",
+					"refId": "A"
+				}
+			],
+			"fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+		},
+		{
+			"id": 8,
+			"title": "client_payment failure reasons (1h)",
+			"type": "barchart",
+			"gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+			"datasource": { "type": "prometheus", "uid": "prometheus" },
+			"targets": [
+				{
+					"expr": "sum by (reason) (increase(kawasekit_client_payment_total{result=\"failure\"}[1h]))",
+					"legendFormat": "{{reason}}",
+					"refId": "A"
+				}
+			],
+			"fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+		}
+	],
+	"refresh": "5s",
+	"schemaVersion": 39,
+	"tags": ["kawasekit", "x402"],
+	"templating": { "list": [] },
+	"time": { "from": "now-30m", "to": "now" },
+	"timezone": "browser",
+	"title": "kawasekit observability",
+	"uid": "kawasekit-observability",
+	"version": 1,
+	"weekStart": ""
+}
