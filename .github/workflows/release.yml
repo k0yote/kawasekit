@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Serialize release runs; cancelling in-progress would leave npm in a
+# half-published state, so we wait instead.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write       # changesets/action opens "Version Packages" PRs
+  pull-requests: write
+  id-token: write       # npm provenance attestation requires OIDC
+
+jobs:
+  release:
+    name: Version + publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # changesets reads commit history to derive release notes; fetch
+          # everything so a multi-changeset release notes the right shas.
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 22 (registry = npmjs.org)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Required because changesets/action's publish step runs `npm publish`,
+      # which reads from `dist/`. The vitest integration suite also exercises
+      # built artefacts indirectly via the example workspaces.
+      - name: Build kawasekit
+        run: pnpm --filter kawasekit build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Pack dry-run (sanity check — same files publish would ship)
+        run: pnpm pack --dry-run
+
+      # changesets/action behaviour:
+      #   - If there are unreleased changesets, opens / updates a "Version
+      #     Packages" PR that bumps the version. Operator reviews and merges.
+      #   - If the previous commit IS the version bump (no pending changesets),
+      #     runs `pnpm changeset publish` to publish to npm.
+      #
+      # Pre-release mode (alpha / beta) is captured in `.changeset/pre.json`
+      # which changesets reads automatically. To enter pre-release mode:
+      #   pnpm changeset pre enter alpha
+      # To exit:
+      #   pnpm changeset pre exit
+      - name: Run changesets release
+        uses: changesets/action@v1
+        with:
+          publish: pnpm changeset publish
+          version: pnpm changeset version
+          commit: "chore(release): version packages"
+          title: "chore(release): version packages"
+          createGithubReleases: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # The `publishConfig.provenance: true` in package.json triggers
+          # provenance attestation; `id-token: write` permission + OIDC on
+          # the runner do the heavy lifting. This env var is the explicit
+          # belt-and-braces signal recommended by npm docs.
+          NPM_CONFIG_PROVENANCE: "true"
