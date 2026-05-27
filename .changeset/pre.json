@@ -1,0 +1,11 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "kawasekit": "0.0.0",
+    "kawasekit-docs": "0.0.0",
+    "agent-x402-jpyc": "0.0.0",
+    "observability": "0.0.0"
+  },
+  "changesets": []
+}
