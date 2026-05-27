@@ -17,6 +17,12 @@
 import type { Account, Address, Chain, Hex, PublicClient, Transport, WalletClient } from "viem";
 import { getAddress, parseSignature, recoverTypedDataAddress } from "viem";
 import { getChain, isSupportedChainId, type SupportedChainId } from "../chains";
+import {
+	invokeHookSafely,
+	type ObservabilityHooks,
+	type SettleEvent,
+	type VerifyEvent,
+} from "../observability/hooks";
 import { JPYC_EIP712_DOMAIN_HINT, JPYC_V2_ADDRESS, jpycAbi } from "../tokens/jpyc";
 import type {
 	Facilitator,
@@ -221,6 +227,16 @@ export interface CreateSelfFacilitatorParams {
 	 * Defaults to 60_000.
 	 */
 	readonly receiptTimeoutMs?: number;
+	/**
+	 * Optional observability callbacks. Hooks are fire-and-forget — any throw
+	 * or rejection inside a hook is silently discarded and never propagates to
+	 * the verify / settle return path. See {@link ObservabilityHooks}.
+	 *
+	 * The facilitator emits `onVerify` after every `verify()` call (including
+	 * the internal re-verify that runs at the start of `settle()`) and
+	 * `onSettle` after every `settle()` call.
+	 */
+	readonly hooks?: ObservabilityHooks;
 }
 
 /**
@@ -278,8 +294,114 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 		);
 	}
 	const network = chainIdToX402Network(supportedChainId);
+	const hooks = params.hooks;
 
-	async function verifyInternal(req: X402VerifyRequest): Promise<X402VerifyResponse> {
+	function buildVerifyEvent(
+		req: X402VerifyRequest,
+		response: X402VerifyResponse,
+		startedAtMs: number,
+	): VerifyEvent {
+		const durationMs = Date.now() - startedAtMs;
+		const eventNetwork = req.paymentRequirements.network;
+		if (response.isValid && response.payer !== undefined) {
+			return {
+				kind: "verify",
+				result: "success",
+				startedAtMs,
+				durationMs,
+				network: eventNetwork,
+				payer: response.payer,
+				amount: req.paymentRequirements.amount,
+			};
+		}
+		if (response.isValid) {
+			// verifyCore always sets payer on success, but the X402VerifyResponse
+			// type permits it to be absent; downgrade to a synthetic failure
+			// event so the discriminated union remains sound for adapters.
+			return {
+				kind: "verify",
+				result: "failure",
+				startedAtMs,
+				durationMs,
+				network: eventNetwork,
+				invalidReason: "unexpected_verify_error",
+				invalidMessage: "verify succeeded but payer was not surfaced",
+			};
+		}
+		const base = {
+			kind: "verify" as const,
+			result: "failure" as const,
+			startedAtMs,
+			durationMs,
+			network: eventNetwork,
+			invalidReason: response.invalidReason ?? "unexpected_verify_error",
+		};
+		if (response.payer !== undefined && response.invalidMessage !== undefined) {
+			return { ...base, payer: response.payer, invalidMessage: response.invalidMessage };
+		}
+		if (response.payer !== undefined) {
+			return { ...base, payer: response.payer };
+		}
+		if (response.invalidMessage !== undefined) {
+			return { ...base, invalidMessage: response.invalidMessage };
+		}
+		return base;
+	}
+
+	function buildSettleEvent(
+		req: X402SettleRequest,
+		response: X402SettleResponse,
+		startedAtMs: number,
+	): SettleEvent {
+		const durationMs = Date.now() - startedAtMs;
+		const eventNetwork = req.paymentRequirements.network;
+		if (response.success && response.payer !== undefined) {
+			return {
+				kind: "settle",
+				result: "success",
+				startedAtMs,
+				durationMs,
+				network: eventNetwork,
+				payer: response.payer,
+				amount: req.paymentRequirements.amount,
+				transaction: response.transaction as Hex,
+			};
+		}
+		if (response.success) {
+			// settleCore always sets payer on success; the spec response type
+			// permits it to be absent so we downgrade to a synthetic failure
+			// rather than emit a malformed event.
+			return {
+				kind: "settle",
+				result: "failure",
+				startedAtMs,
+				durationMs,
+				network: eventNetwork,
+				errorReason: "unexpected_settle_error",
+				errorMessage: "settle succeeded but payer was not surfaced",
+				transaction: response.transaction as Hex,
+			};
+		}
+		const base = {
+			kind: "settle" as const,
+			result: "failure" as const,
+			startedAtMs,
+			durationMs,
+			network: eventNetwork,
+			errorReason: response.errorReason ?? "unexpected_settle_error",
+		};
+		const withPayer = response.payer !== undefined ? { ...base, payer: response.payer } : base;
+		const withMessage =
+			response.errorMessage !== undefined
+				? { ...withPayer, errorMessage: response.errorMessage }
+				: withPayer;
+		if (response.transaction !== "" && response.transaction !== undefined) {
+			return { ...withMessage, transaction: response.transaction as Hex };
+		}
+		return withMessage;
+	}
+
+	async function verifyCore(req: X402VerifyRequest): Promise<X402VerifyResponse> {
 		// 1. Scheme / network gates
 		if (req.paymentRequirements.scheme !== "exact") {
 			return failVerify("invalid_scheme");
@@ -400,9 +522,11 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 		return { isValid: true, payer: auth.from };
 	}
 
-	async function settleInternal(req: X402SettleRequest): Promise<X402SettleResponse> {
-		// Re-verify before broadcasting.
-		const verifyResult = await verifyInternal(req);
+	async function settleCore(req: X402SettleRequest): Promise<X402SettleResponse> {
+		// Re-verify before broadcasting. The wrapped `verify` is used so the
+		// internal re-verify also emits onVerify; operators can dedupe in their
+		// hook if they don't want the extra event.
+		const verifyResult = await verify(req);
 		if (!verifyResult.isValid) {
 			return failSettle(
 				req.paymentRequirements.network,
@@ -477,6 +601,20 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 		};
 	}
 
+	async function verify(req: X402VerifyRequest): Promise<X402VerifyResponse> {
+		const startedAtMs = Date.now();
+		const result = await verifyCore(req);
+		invokeHookSafely(hooks?.onVerify, buildVerifyEvent(req, result, startedAtMs));
+		return result;
+	}
+
+	async function settle(req: X402SettleRequest): Promise<X402SettleResponse> {
+		const startedAtMs = Date.now();
+		const result = await settleCore(req);
+		invokeHookSafely(hooks?.onSettle, buildSettleEvent(req, result, startedAtMs));
+		return result;
+	}
+
 	async function supportedInternal(): Promise<X402SupportedResponse> {
 		const kind: X402SupportedKind = {
 			x402Version: X402_VERSION,
@@ -491,8 +629,8 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 	}
 
 	return {
-		verify: verifyInternal,
-		settle: settleInternal,
+		verify,
+		settle,
 		supported: supportedInternal,
 	};
 }

@@ -22,7 +22,15 @@
  * @packageDocumentation
  */
 
+import type { Hex } from "viem";
 import { getAddress } from "viem";
+import {
+	extractAcceptedNetworks,
+	invokeHookSafely,
+	type ObservabilityHooks,
+	type PaymentAcceptedEvent,
+	type PaymentRequiredEvent,
+} from "../observability/hooks";
 import {
 	decodePaymentSignatureHeader,
 	encodePaymentRequiredHeader,
@@ -94,6 +102,13 @@ export interface CreateX402HandlerParams {
 	 * response. Defaults to `{ url: request.url }`.
 	 */
 	readonly resourceFor?: (request: Request) => Promise<X402ResourceInfo> | X402ResourceInfo;
+	/**
+	 * Optional observability callbacks. The handler emits `onPaymentRequired`
+	 * each time it returns a 402, and `onPaymentAccepted` after a settled
+	 * payment unlocks the inner handler. Hooks are fire-and-forget — see
+	 * {@link ObservabilityHooks}.
+	 */
+	readonly hooks?: ObservabilityHooks;
 }
 
 /** The function returned by {@link createX402Handler}. */
@@ -195,9 +210,26 @@ function withPaymentResponseHeader(
  * ```
  */
 export function createX402Handler(params: CreateX402HandlerParams): X402RequestHandler {
-	const { facilitator, requirementsFor, handler, resourceFor } = params;
+	const { facilitator, requirementsFor, handler, resourceFor, hooks } = params;
 
 	return async function x402Handler(request: Request): Promise<Response> {
+		const startedAtMs = Date.now();
+
+		const emitPaymentRequired = (
+			reqs: readonly X402PaymentRequirements[],
+			error: string,
+		): Promise<Response> => {
+			const event: PaymentRequiredEvent = {
+				kind: "payment_required",
+				startedAtMs,
+				durationMs: Date.now() - startedAtMs,
+				requestUrl: request.url,
+				acceptedNetworks: extractAcceptedNetworks(reqs),
+			};
+			invokeHookSafely(hooks?.onPaymentRequired, event);
+			return paymentRequired(request, reqs, resourceFor, error);
+		};
+
 		// 1. Resolve requirements (or pass through)
 		let requirements: readonly X402PaymentRequirements[] | null;
 		try {
@@ -212,12 +244,7 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 		// 2. Read the PAYMENT-SIGNATURE header
 		const headerValue = request.headers.get(X402_HEADER_PAYMENT_SIGNATURE);
 		if (headerValue === null || headerValue === "") {
-			return paymentRequired(
-				request,
-				requirements,
-				resourceFor,
-				"PAYMENT-SIGNATURE header is required",
-			);
+			return emitPaymentRequired(requirements, "PAYMENT-SIGNATURE header is required");
 		}
 
 		// 3. Decode the payment payload
@@ -229,7 +256,7 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 				cause instanceof X402InvalidPayloadError
 					? cause.reason
 					: "invalid PAYMENT-SIGNATURE header";
-			return paymentRequired(request, requirements, resourceFor, reason);
+			return emitPaymentRequired(requirements, reason);
 		}
 
 		// 4. Match chosen requirements to an offered entry
@@ -237,10 +264,8 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 			isSameRequirements(offered, paymentPayload.accepted),
 		);
 		if (!matchedRequirements) {
-			return paymentRequired(
-				request,
+			return emitPaymentRequired(
 				requirements,
-				resourceFor,
 				"paymentPayload.accepted does not match any offered requirements",
 			);
 		}
@@ -257,12 +282,7 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 			return internalError("facilitator_verify_failed", cause);
 		}
 		if (!verifyResult.isValid) {
-			return paymentRequired(
-				request,
-				requirements,
-				resourceFor,
-				verifyResult.invalidReason ?? "verify failed",
-			);
+			return emitPaymentRequired(requirements, verifyResult.invalidReason ?? "verify failed");
 		}
 
 		// 6. Settle
@@ -277,15 +297,24 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 			return internalError("facilitator_settle_failed", cause);
 		}
 		if (!settleResult.success) {
-			return paymentRequired(
-				request,
-				requirements,
-				resourceFor,
-				settleResult.errorReason ?? "settle failed",
-			);
+			return emitPaymentRequired(requirements, settleResult.errorReason ?? "settle failed");
 		}
 
-		// 7. Invoke inner handler, attach PAYMENT-RESPONSE header.
+		// 7. Settled — emit onPaymentAccepted then invoke inner handler.
+		if (settleResult.payer !== undefined) {
+			const acceptedEvent: PaymentAcceptedEvent = {
+				kind: "payment_accepted",
+				startedAtMs,
+				durationMs: Date.now() - startedAtMs,
+				requestUrl: request.url,
+				payer: settleResult.payer,
+				amount: settleResult.amount ?? matchedRequirements.amount,
+				network: matchedRequirements.network,
+				transaction: settleResult.transaction as Hex,
+			};
+			invokeHookSafely(hooks?.onPaymentAccepted, acceptedEvent);
+		}
+
 		// Inner handler errors propagate — settlement has already happened.
 		const context: X402HandlerContext = {
 			paymentPayload,

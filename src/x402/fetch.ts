@@ -22,11 +22,19 @@
  * @packageDocumentation
  */
 
+import type { Hex } from "viem";
+import {
+	type ClientPaymentEvent,
+	invokeHookSafely,
+	type ObservabilityHooks,
+} from "../observability/hooks";
 import type { X402PaymentSigner } from "./client";
 import {
 	decodePaymentRequiredHeader,
+	decodePaymentResponseHeader,
 	encodePaymentSignatureHeader,
 	X402_HEADER_PAYMENT_REQUIRED,
+	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./encoding";
 import type { X402PaymentRequiredResponse, X402PaymentRequirements } from "./types";
@@ -69,6 +77,13 @@ export interface WrapFetchParams {
 		requirements: X402PaymentRequirements,
 		paymentRequired: X402PaymentRequiredResponse,
 	) => boolean | undefined | Promise<boolean | undefined>;
+	/**
+	 * Optional observability callbacks. {@link wrapFetch} emits an
+	 * `onClientPayment` event for every paywall round-trip — `success` when the
+	 * retry returns 2xx with a PAYMENT-RESPONSE header, `failure` otherwise
+	 * (including `onPayment` declining the retry).
+	 */
+	readonly hooks?: ObservabilityHooks;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,8 +147,26 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 	const baseFetch: X402Fetch = params.fetch ?? ((input, init) => fetch(input, init));
 	const selectRequirements = params.selectRequirements ?? defaultSelectRequirements;
 	const onPayment = params.onPayment;
+	const hooks = params.hooks;
 
 	return async function x402Fetch(input, init) {
+		const startedAtMs = Date.now();
+		const requestUrl =
+			typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+
+		const emitFailure = (reason: string, httpStatus: number | undefined): void => {
+			const event: ClientPaymentEvent = {
+				kind: "client_payment",
+				result: "failure",
+				startedAtMs,
+				durationMs: Date.now() - startedAtMs,
+				requestUrl,
+				reason,
+				...(httpStatus !== undefined ? { httpStatus } : {}),
+			};
+			invokeHookSafely(hooks?.onClientPayment, event);
+		};
+
 		const initialResponse = await baseFetch(input, init);
 		if (initialResponse.status !== 402) {
 			return initialResponse;
@@ -141,17 +174,20 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 
 		const paymentRequired = await readPaymentRequired(initialResponse);
 		if (paymentRequired === null || paymentRequired.accepts.length === 0) {
+			emitFailure("no_acceptable_requirement", 402);
 			return initialResponse;
 		}
 
 		const chosen = selectRequirements(paymentRequired.accepts, initialResponse);
 		if (chosen === null) {
+			emitFailure("no_acceptable_requirement", 402);
 			return initialResponse;
 		}
 
 		if (onPayment) {
 			const proceed = await onPayment(chosen, paymentRequired);
 			if (proceed === false) {
+				emitFailure("onPayment_declined", 402);
 				return initialResponse;
 			}
 		}
@@ -164,6 +200,41 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 		const retryHeaders = new Headers(init?.headers);
 		retryHeaders.set(X402_HEADER_PAYMENT_SIGNATURE, encodePaymentSignatureHeader(paymentPayload));
 
-		return baseFetch(input, { ...init, headers: retryHeaders });
+		const retryResponse = await baseFetch(input, { ...init, headers: retryHeaders });
+
+		if (retryResponse.status >= 200 && retryResponse.status < 300) {
+			const settlementHeader = retryResponse.headers.get(X402_HEADER_PAYMENT_RESPONSE);
+			let transaction: Hex | undefined;
+			if (settlementHeader !== null && settlementHeader !== "") {
+				try {
+					const settlement = decodePaymentResponseHeader(settlementHeader);
+					if (settlement.transaction !== "") {
+						transaction = settlement.transaction as Hex;
+					}
+				} catch {
+					// PAYMENT-RESPONSE header malformed — the retry still
+					// succeeded so we treat that as a (degraded) success event.
+				}
+			}
+			const successEvent: ClientPaymentEvent = {
+				kind: "client_payment",
+				result: "success",
+				startedAtMs,
+				durationMs: Date.now() - startedAtMs,
+				requestUrl,
+				payer: params.signer.address,
+				amount: chosen.amount,
+				network: chosen.network,
+				...(transaction !== undefined ? { transaction } : {}),
+			};
+			invokeHookSafely(hooks?.onClientPayment, successEvent);
+		} else {
+			emitFailure(
+				retryResponse.status === 402 ? "settle_rejected" : "http_error",
+				retryResponse.status,
+			);
+		}
+
+		return retryResponse;
 	};
 }

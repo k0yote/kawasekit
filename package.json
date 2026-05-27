@@ -66,6 +66,36 @@
 				"types": "./dist/session/index.d.cts",
 				"default": "./dist/session/index.cjs"
 			}
+		},
+		"./observability": {
+			"import": {
+				"types": "./dist/observability/index.d.ts",
+				"default": "./dist/observability/index.js"
+			},
+			"require": {
+				"types": "./dist/observability/index.d.cts",
+				"default": "./dist/observability/index.cjs"
+			}
+		},
+		"./observability/prometheus": {
+			"import": {
+				"types": "./dist/observability/prometheus/index.d.ts",
+				"default": "./dist/observability/prometheus/index.js"
+			},
+			"require": {
+				"types": "./dist/observability/prometheus/index.d.cts",
+				"default": "./dist/observability/prometheus/index.cjs"
+			}
+		},
+		"./observability/otlp": {
+			"import": {
+				"types": "./dist/observability/otlp/index.d.ts",
+				"default": "./dist/observability/otlp/index.js"
+			},
+			"require": {
+				"types": "./dist/observability/otlp/index.d.cts",
+				"default": "./dist/observability/otlp/index.cjs"
+			}
 		}
 	},
 	"files": [
@@ -103,10 +133,13 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.15",
 		"@changesets/cli": "^2.31.0",
+		"@opentelemetry/api": "1.9.0",
+		"@opentelemetry/sdk-metrics": "1.30.1",
 		"@types/node": "^22.0.0",
 		"@x402/core": "2.13.0",
 		"dotenv": "^17.4.2",
 		"hono": "4.12.22",
+		"prom-client": "15.1.3",
 		"prool": "^0.2.4",
 		"tsup": "^8.5.1",
 		"tsx": "^4.22.3",
@@ -114,10 +147,18 @@
 		"vitest": "^4.1.7"
 	},
 	"peerDependencies": {
-		"hono": ">=4.10.0"
+		"@opentelemetry/api": ">=1.9.0",
+		"hono": ">=4.10.0",
+		"prom-client": ">=15.0.0"
 	},
 	"peerDependenciesMeta": {
+		"@opentelemetry/api": {
+			"optional": true
+		},
 		"hono": {
+			"optional": true
+		},
+		"prom-client": {
 			"optional": true
 		}
 	}
