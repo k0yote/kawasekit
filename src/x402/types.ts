@@ -289,7 +289,8 @@ export interface X402SupportedResponse {
  * A facilitator endpoint kawasekit can talk to.
  *
  * Two implementations live in `src/x402/facilitator.ts`:
- * - `createCoinbaseFacilitator()` — proxies to Coinbase CDP `/verify` & `/settle`
+ * - `createHttpFacilitator()` — proxies `/verify` & `/settle` over HTTP to any
+ *   x402 v2-compliant endpoint (Coinbase CDP, a self-hosted mirror, etc.)
  * - `createSelfFacilitator()` — runs `transferWithAuthorization` from a
  *   private key kawasekit holds locally (testnet / self-host case)
  *

@@ -83,9 +83,13 @@ export {
 } from "./x402/encoding";
 export { X402InvalidPayloadError } from "./x402/errors";
 export {
+	/** @deprecated Renamed to `CreateHttpFacilitatorParams`. Removed in v0.2.0. */
 	type CreateCoinbaseFacilitatorParams,
+	type CreateHttpFacilitatorParams,
 	type CreateSelfFacilitatorParams,
+	/** @deprecated Renamed to `createHttpFacilitator`. Removed in v0.2.0. */
 	createCoinbaseFacilitator,
+	createHttpFacilitator,
 	createSelfFacilitator,
 	X402_FACILITATOR_ERROR_CODES,
 } from "./x402/facilitator";

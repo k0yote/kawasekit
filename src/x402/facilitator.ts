@@ -1,6 +1,6 @@
 /**
  * Facilitator implementations: local viem-backed (`createSelfFacilitator`) and
- * HTTP-proxied (`createCoinbaseFacilitator`).
+ * HTTP-proxied (`createHttpFacilitator`).
  *
  * Both expose the same {@link Facilitator} interface — `verify` / `settle` /
  * `supported` — so {@link createX402Handler} can swap one for the other based
@@ -640,12 +640,13 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 // facilitator endpoint)
 // ---------------------------------------------------------------------------
 
-/** Parameters for {@link createCoinbaseFacilitator}. */
-export interface CreateCoinbaseFacilitatorParams {
+/** Parameters for {@link createHttpFacilitator}. */
+export interface CreateHttpFacilitatorParams {
 	/**
-	 * Base URL of the facilitator service (e.g. Coinbase CDP). Endpoints
-	 * `/verify`, `/settle`, `/supported` are POST / POST / GET respectively
-	 * relative to this URL. Trailing slash is stripped.
+	 * Base URL of the facilitator service (Coinbase CDP, your own host, any
+	 * x402 v2-compliant endpoint). Endpoints `/verify`, `/settle`, `/supported`
+	 * are POST / POST / GET respectively relative to this URL. Trailing slash
+	 * is stripped.
 	 */
 	readonly baseUrl: string;
 	/**
@@ -667,23 +668,24 @@ export interface CreateCoinbaseFacilitatorParams {
  * Builds a facilitator that proxies all RPC over HTTP to a remote endpoint,
  * matching the request / response shapes of x402 v2 spec §7.
  *
- * Despite the name, this client is **not Coinbase-specific** — any service
- * exposing `/verify`, `/settle`, and `/supported` per the spec works.
+ * Works with any x402 v2-compliant facilitator — Coinbase CDP, your own
+ * self-hosted facilitator behind nginx, a regional mirror — as long as it
+ * exposes `/verify`, `/settle`, and `/supported` per the spec.
  *
- * If Polygon Amoy is not in the facilitator's supported networks (see plan
- * risk #1), the M3 demo falls back to {@link createSelfFacilitator}.
+ * If your target facilitator doesn't support the chain you need, fall back
+ * to {@link createSelfFacilitator} (in-process viem broadcaster).
  *
  * @example
  * ```ts
- * import { createCoinbaseFacilitator } from "kawasekit";
+ * import { createHttpFacilitator } from "kawasekit";
  *
- * const facilitator = createCoinbaseFacilitator({
+ * const facilitator = createHttpFacilitator({
  *   baseUrl: process.env.X402_FACILITATOR_URL!, // e.g. Coinbase CDP endpoint
  *   getAuthHeaders: () => ({ Authorization: `Bearer ${apiKey}` }),
  * });
  * ```
  */
-export function createCoinbaseFacilitator(params: CreateCoinbaseFacilitatorParams): Facilitator {
+export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Facilitator {
 	const baseUrl = params.baseUrl.replace(/\/$/, "");
 	const fetchImpl = params.fetch ?? fetch;
 	const getAuthHeaders = params.getAuthHeaders;
@@ -759,4 +761,44 @@ export function createCoinbaseFacilitator(params: CreateCoinbaseFacilitatorParam
 		settle: settleInternal,
 		supported: supportedInternal,
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases (M3-era names)
+//
+// The HTTP-proxied facilitator used to be called `createCoinbaseFacilitator`
+// because the only x402 v2-compliant endpoint we tested against at the time
+// was Coinbase CDP. The function was never Coinbase-specific — it speaks the
+// raw x402 v2 HTTP shape — and the rename to `createHttpFacilitator` lands in
+// v0.1.0-alpha to make that obvious before the npm publish freezes the API.
+//
+// The aliases below preserve M3-era call sites for the v0.1.x line. Calling
+// `createCoinbaseFacilitator` emits a one-shot Node DeprecationWarning. The
+// aliases will be removed in v0.2.0.
+// ---------------------------------------------------------------------------
+
+/**
+ * @deprecated Renamed to {@link CreateHttpFacilitatorParams} in v0.1.0-alpha.
+ *   The HTTP facilitator works with any x402 v2-compliant endpoint, not only
+ *   Coinbase CDP. This alias will be removed in v0.2.0.
+ */
+export type CreateCoinbaseFacilitatorParams = CreateHttpFacilitatorParams;
+
+let warnedCreateCoinbaseFacilitator = false;
+
+/**
+ * @deprecated Renamed to {@link createHttpFacilitator} in v0.1.0-alpha.
+ *   This alias delegates to the new function and emits one
+ *   `DeprecationWarning` per process on first call. It will be removed in
+ *   v0.2.0.
+ */
+export function createCoinbaseFacilitator(params: CreateHttpFacilitatorParams): Facilitator {
+	if (!warnedCreateCoinbaseFacilitator) {
+		warnedCreateCoinbaseFacilitator = true;
+		process.emitWarning(
+			"createCoinbaseFacilitator() is deprecated and will be removed in kawasekit v0.2.0. Use createHttpFacilitator() instead — the function works with any x402 v2-compliant HTTP endpoint, not only Coinbase CDP.",
+			{ type: "DeprecationWarning", code: "KAWASEKIT_DEP_001" },
+		);
+	}
+	return createHttpFacilitator(params);
 }

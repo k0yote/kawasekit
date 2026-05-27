@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readBody, withHttpListener } from "../../test/helpers/http-listener";
 import { JPYC_V2_ADDRESS } from "../tokens/jpyc";
-import { createCoinbaseFacilitator } from "./facilitator";
+import { createCoinbaseFacilitator, createHttpFacilitator } from "./facilitator";
 import type {
 	X402PaymentPayload,
 	X402PaymentRequirements,
@@ -36,7 +36,7 @@ const PAYLOAD: X402PaymentPayload = {
 	},
 };
 
-describe("createCoinbaseFacilitator — verify", () => {
+describe("createHttpFacilitator — verify", () => {
 	it("POSTs the right body to /verify and returns the parsed response", async () => {
 		let receivedPath = "";
 		let receivedMethod = "";
@@ -56,7 +56,7 @@ describe("createCoinbaseFacilitator — verify", () => {
 				);
 			},
 			async (baseUrl) => {
-				const facilitator = createCoinbaseFacilitator({ baseUrl });
+				const facilitator = createHttpFacilitator({ baseUrl });
 				const result = await facilitator.verify({
 					x402Version: 2,
 					paymentPayload: PAYLOAD,
@@ -85,7 +85,7 @@ describe("createCoinbaseFacilitator — verify", () => {
 				res.end(JSON.stringify({ isValid: true } satisfies X402VerifyResponse));
 			},
 			async (baseUrl) => {
-				const facilitator = createCoinbaseFacilitator({ baseUrl: `${baseUrl}/` });
+				const facilitator = createHttpFacilitator({ baseUrl: `${baseUrl}/` });
 				await facilitator.verify({
 					x402Version: 2,
 					paymentPayload: PAYLOAD,
@@ -106,7 +106,7 @@ describe("createCoinbaseFacilitator — verify", () => {
 				res.end(JSON.stringify({ isValid: true } satisfies X402VerifyResponse));
 			},
 			async (baseUrl) => {
-				const facilitator = createCoinbaseFacilitator({
+				const facilitator = createHttpFacilitator({
 					baseUrl,
 					getAuthHeaders: async (endpoint) => {
 						receivedEndpointArg = endpoint;
@@ -132,7 +132,7 @@ describe("createCoinbaseFacilitator — verify", () => {
 				res.end(JSON.stringify({ isValid: false, invalidReason: "invalid_payload" }));
 			},
 			async (baseUrl) => {
-				const facilitator = createCoinbaseFacilitator({ baseUrl });
+				const facilitator = createHttpFacilitator({ baseUrl });
 				await expect(
 					facilitator.verify({
 						x402Version: 2,
@@ -151,7 +151,7 @@ describe("createCoinbaseFacilitator — verify", () => {
 				res.end("not json");
 			},
 			async (baseUrl) => {
-				const facilitator = createCoinbaseFacilitator({ baseUrl });
+				const facilitator = createHttpFacilitator({ baseUrl });
 				await expect(
 					facilitator.verify({
 						x402Version: 2,
@@ -164,7 +164,7 @@ describe("createCoinbaseFacilitator — verify", () => {
 	});
 });
 
-describe("createCoinbaseFacilitator — settle", () => {
+describe("createHttpFacilitator — settle", () => {
 	it("POSTs to /settle and returns the parsed response", async () => {
 		let receivedPath = "";
 		await withHttpListener(
@@ -182,7 +182,7 @@ describe("createCoinbaseFacilitator — settle", () => {
 				);
 			},
 			async (baseUrl) => {
-				const facilitator = createCoinbaseFacilitator({ baseUrl });
+				const facilitator = createHttpFacilitator({ baseUrl });
 				const result = await facilitator.settle({
 					x402Version: 2,
 					paymentPayload: PAYLOAD,
@@ -210,7 +210,7 @@ describe("createCoinbaseFacilitator — settle", () => {
 				);
 			},
 			async (baseUrl) => {
-				const facilitator = createCoinbaseFacilitator({ baseUrl });
+				const facilitator = createHttpFacilitator({ baseUrl });
 				const result = await facilitator.settle({
 					x402Version: 2,
 					paymentPayload: PAYLOAD,
@@ -223,7 +223,7 @@ describe("createCoinbaseFacilitator — settle", () => {
 	});
 });
 
-describe("createCoinbaseFacilitator — supported", () => {
+describe("createHttpFacilitator — supported", () => {
 	it("GETs /supported and returns parsed response", async () => {
 		let receivedMethod = "";
 		let receivedPath = "";
@@ -241,7 +241,7 @@ describe("createCoinbaseFacilitator — supported", () => {
 				);
 			},
 			async (baseUrl) => {
-				const facilitator = createCoinbaseFacilitator({ baseUrl });
+				const facilitator = createHttpFacilitator({ baseUrl });
 				const result = await facilitator.supported();
 				expect(receivedMethod).toBe("GET");
 				expect(receivedPath).toBe("/supported");
@@ -264,11 +264,54 @@ describe("createCoinbaseFacilitator — supported", () => {
 				);
 			},
 			async (baseUrl) => {
-				const facilitator = createCoinbaseFacilitator({ baseUrl });
+				const facilitator = createHttpFacilitator({ baseUrl });
 				const result = await facilitator.supported();
 				const amoy = result.kinds.find((k) => k.network === "eip155:80002");
 				expect(amoy).toBeUndefined(); // demo script should branch on this
 			},
 		);
+	});
+});
+
+describe("createCoinbaseFacilitator (deprecated alias)", () => {
+	it("delegates to createHttpFacilitator and emits a DeprecationWarning once", async () => {
+		const warnings: { message: string; code: string | undefined }[] = [];
+		const onWarning = (warning: Error & { code?: string }): void => {
+			warnings.push({ message: warning.message, code: warning.code });
+		};
+		process.on("warning", onWarning);
+		try {
+			await withHttpListener(
+				async (req, res) => {
+					await readBody(req);
+					res.setHeader("content-type", "application/json");
+					res.end(JSON.stringify({ isValid: true } satisfies X402VerifyResponse));
+				},
+				async (baseUrl) => {
+					const facilitator = createCoinbaseFacilitator({ baseUrl });
+					const result = await facilitator.verify({
+						x402Version: 2,
+						paymentPayload: PAYLOAD,
+						paymentRequirements: REQS,
+					});
+					expect(result.isValid).toBe(true);
+					// Second call MUST NOT emit a second warning (one-shot per process).
+					const second = createCoinbaseFacilitator({ baseUrl });
+					await second.verify({
+						x402Version: 2,
+						paymentPayload: PAYLOAD,
+						paymentRequirements: REQS,
+					});
+				},
+			);
+			// Allow the warning event loop tick to flush.
+			await new Promise((resolve) => setImmediate(resolve));
+			const deprecation = warnings.find((w) => w.code === "KAWASEKIT_DEP_001");
+			expect(deprecation).toBeDefined();
+			expect(deprecation?.message).toMatch(/createHttpFacilitator/);
+			expect(warnings.filter((w) => w.code === "KAWASEKIT_DEP_001")).toHaveLength(1);
+		} finally {
+			process.off("warning", onWarning);
+		}
 	});
 });
