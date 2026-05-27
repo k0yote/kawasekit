@@ -1,0 +1,76 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    # Only re-deploy when something the docs build depends on changes.
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig.json"
+      - ".github/workflows/docs.yml"
+  # Allow manual triggers (e.g. to redeploy after a README edit elsewhere).
+  workflow_dispatch:
+
+# One deploy at a time, latest commit wins.
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: true
+
+# GitHub Pages needs these permissions to deploy via Actions.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build Starlight site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # starlight-typedoc reads TypeScript JSDoc from src/, so the kawasekit
+      # tsconfig needs to resolve. We don't need the dist/ for serving — the
+      # site renders fine without it — but a build keeps the TypeDoc reference
+      # in sync with the published surface.
+      - name: Build kawasekit (provides type info for TypeDoc)
+        run: pnpm --filter kawasekit build
+
+      - name: Build docs site
+        run: pnpm --filter kawasekit-docs build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,130 @@
+---
+title: Agent paywall (Mastra + JPYC)
+description: A Claude agent that pays a Hono paywall in JPYC on Polygon Amoy.
+---
+
+import { Aside, Tabs, TabItem } from "@astrojs/starlight/components";
+
+The `examples/agent-x402-jpyc` workspace is the canonical end-to-end demo
+of kawasekit on Polygon Amoy. It pairs a [Mastra](https://mastra.ai/)
+agent (Anthropic Claude under the hood) with a [Hono](https://hono.dev/)
+server. The agent calls `GET /weather/:city`; the server gates the route
+behind a JPYC v2 x402 v2 paywall; the agent pays automatically and gets
+its answer.
+
+## Architecture
+
+```
+agent EOA  ──signs EIP-3009──▶  facilitator EOA  ──broadcasts──▶  JPYC contract
+   │                                  │                              │
+   │                              pays POL                            │
+   │                                                                  │
+   └────────────────────── 0.001 JPYC ───────────────────────────▶ recipient
+```
+
+Three on-chain identities, all separate by design:
+
+- **Agent payer EOA** — signs EIP-3009 `transferWithAuthorization` off-chain.
+  Holds JPYC.
+- **Facilitator EOA** — pays POL for gas and broadcasts the settlement
+  transaction. Holds POL. Never sees user JPYC.
+- **Recipient EOA** — receives the JPYC. Any address you control.
+
+The two Node processes (server + agent) talk only over HTTP. The agent's
+sole x402 surface is `wrapFetch`; everything else is plain Mastra +
+Anthropic SDK.
+
+## Prerequisites
+
+- Node 22+ / pnpm 11+
+- Polygon Amoy **POL** in the facilitator EOA — faucet:
+  [https://faucet.polygon.technology/](https://faucet.polygon.technology/)
+- Polygon Amoy **JPYC** in the agent payer EOA — faucet:
+  [https://faucet.jpyc.co.jp/](https://faucet.jpyc.co.jp/). 0.1 JPYC
+  supports roughly 100 calls.
+- An [Anthropic API key](https://console.anthropic.com/). A three-city
+  run on `claude-sonnet-4-5` costs about $0.02–$0.05.
+
+<Aside type="tip">
+The agent payer EOA does **not** need POL. It only signs off-chain — the
+facilitator is the one broadcasting on-chain.
+</Aside>
+
+## Run it
+
+From the repository root:
+
+```bash
+pnpm install
+pnpm --filter kawasekit build
+```
+
+Then in the example workspace:
+
+```bash
+cd examples/agent-x402-jpyc
+cp .env.example .env
+# Fill in: OWNER_PRIVATE_KEY, X402_PAYER_PRIVATE_KEY,
+#         X402_FACILITATOR_PRIVATE_KEY, X402_RECIPIENT, ANTHROPIC_API_KEY
+```
+
+Two terminals:
+
+<Tabs>
+<TabItem label="Terminal 1 — Paywall server">
+
+```bash
+pnpm dev:server
+# →  listening on http://127.0.0.1:8787
+# →  paywalled route: GET /weather/:city
+```
+
+</TabItem>
+<TabItem label="Terminal 2 — Agent">
+
+```bash
+pnpm dev:agent
+# Claude reads the prompt, calls fetch_weather 3 times,
+# pays for each call. Final output is a one-line summary
+# per city plus a wrap-up.
+```
+
+</TabItem>
+</Tabs>
+
+## What you should see
+
+Each call lands one tx on Polygon Amoy. The agent logs the Polygonscan
+URL on the way out — open it to see real JPYC settle.
+
+## The session-key sidecar
+
+`pnpm dev:session-demo` is a separate, smaller script that demonstrates
+the M3-2 envelope flow: owner-side issuance, serialize → parse round
+trip, agent-side restore on a fresh `PublicClient`. It does not need the
+LLM API key and is the fastest way to see kawasekit's session-key
+plumbing in isolation.
+
+## Gotchas this example surfaces
+
+- **Concurrent settle requires `nonceManager`.** The agent fans out three
+  parallel `fetch_weather` calls; the facilitator must serialise its
+  on-chain nonces or only one tx lands. The fix is to construct the
+  facilitator account with viem's `nonceManager`. See `server/index.ts`
+  for the wiring.
+- **EIP-3009 cannot be signed by a smart account.** JPYC v2's
+  `transferWithAuthorization` is pure `ecrecover`, so the agent's signer
+  must be an EOA. The kawasekit `transferJpyc()` UserOp path is what
+  smart-account-held JPYC uses.
+- **The owner / agent / facilitator split is enforced operationally.**
+  kawasekit does not stop you from collapsing them, but the threat
+  model (and the example) treat them as three independent identities.
+
+## Going further
+
+- Switch the facilitator to mainnet by changing `--chain polygonAmoy` to
+  `--chain polygon` everywhere and setting `KAWASEKIT_ALLOW_MAINNET=1`.
+- Wire the [observability adapter](/examples/observability/) into the
+  facilitator's `hooks` to get a Grafana dashboard over the settlements.
+- Read the [threat model](/reference/security/) for what each EOA can
+  and cannot do if compromised.

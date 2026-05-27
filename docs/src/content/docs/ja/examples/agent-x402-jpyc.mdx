@@ -1,0 +1,129 @@
+---
+title: エージェントペイウォール (Mastra + JPYC)
+description: Polygon Amoy 上の Hono x402 ペイウォールに JPYC で支払う Claude エージェントの E2E デモ。
+---
+
+import { Aside, Tabs, TabItem } from "@astrojs/starlight/components";
+
+`examples/agent-x402-jpyc` は kawasekit を Polygon Amoy 上で動かす canonical
+な E2E デモです。[Mastra](https://mastra.ai/) エージェント (内部で
+Anthropic Claude を利用) と [Hono](https://hono.dev/) サーバーをペアにし、
+エージェントが `GET /weather/:city` を呼び出すと、サーバーは JPYC v2 の
+x402 v2 ペイウォールでルートをガードし、エージェントは自動で支払って
+レスポンスを得ます。
+
+## アーキテクチャ
+
+```
+agent EOA  ──EIP-3009 署名──▶  facilitator EOA  ──ブロードキャスト──▶  JPYC コントラクト
+   │                                  │                              │
+   │                              POL を支払う                         │
+   │                                                                  │
+   └────────────────────── 0.001 JPYC ───────────────────────────▶ recipient
+```
+
+設計上分離された 3 つのオンチェーン ID:
+
+- **Agent payer EOA** — EIP-3009 `transferWithAuthorization` をオフチェーン
+  で署名。JPYC を保持。
+- **Facilitator EOA** — POL でガスを支払い、settlement tx をブロードキャスト。
+  POL を保持、ユーザーの JPYC には触れない。
+- **Recipient EOA** — JPYC の受取先。自分が制御する任意のアドレス。
+
+2 つの Node プロセス (server + agent) は HTTP 経由でのみやりとりします。
+エージェント側の x402 surface は `wrapFetch` のみで、それ以外は単純な
+Mastra + Anthropic SDK です。
+
+## 前提
+
+- Node 22+ / pnpm 11+
+- Polygon Amoy **POL** を facilitator EOA に — ファセット:
+  [https://faucet.polygon.technology/](https://faucet.polygon.technology/)
+- Polygon Amoy **JPYC** を agent payer EOA に — ファセット:
+  [https://faucet.jpyc.co.jp/](https://faucet.jpyc.co.jp/)。0.1 JPYC で
+  約 100 コール分。
+- [Anthropic API キー](https://console.anthropic.com/)。3 都市分の実行で
+  `claude-sonnet-4-5` の場合 $0.02〜$0.05 程度。
+
+<Aside type="tip">
+Agent payer EOA は POL を持つ必要は **ありません**。署名のみオフチェーン
+で行い、オンチェーンブロードキャストは facilitator が担当します。
+</Aside>
+
+## 動かす
+
+リポジトリルートで:
+
+```bash
+pnpm install
+pnpm --filter kawasekit build
+```
+
+example ワークスペースで:
+
+```bash
+cd examples/agent-x402-jpyc
+cp .env.example .env
+# 設定: OWNER_PRIVATE_KEY、X402_PAYER_PRIVATE_KEY、
+#       X402_FACILITATOR_PRIVATE_KEY、X402_RECIPIENT、ANTHROPIC_API_KEY
+```
+
+2 つのターミナル:
+
+<Tabs>
+<TabItem label="ターミナル 1 — Paywall サーバー">
+
+```bash
+pnpm dev:server
+# →  listening on http://127.0.0.1:8787
+# →  paywalled route: GET /weather/:city
+```
+
+</TabItem>
+<TabItem label="ターミナル 2 — Agent">
+
+```bash
+pnpm dev:agent
+# Claude がプロンプトを読み、fetch_weather を 3 回呼び、
+# 各コールで支払う。最終出力は都市ごと 1 行サマリー + まとめ。
+```
+
+</TabItem>
+</Tabs>
+
+## 期待される挙動
+
+各コールが Polygon Amoy 上で 1 件の tx を産みます。エージェント側で
+Polygonscan の URL がログ出力されるので、開いて実際の JPYC settlement
+を確認できます。
+
+## session-key サイドカー
+
+`pnpm dev:session-demo` は M3-2 envelope フローを単独でデモする別スクリプト
+です: オーナー側の発行、serialize → parse のラウンドトリップ、エージェント
+側の新規 `PublicClient` での復元。LLM API キーを必要としないので、kawasekit
+の session-key 配線を最短で確認するのに使えます。
+
+## このデモが浮き彫りにする gotcha
+
+- **並列 settle には `nonceManager` が必須。** エージェントは
+  `fetch_weather` を 3 件並列で fan-out します。facilitator がオンチェーン
+  nonce を直列化しないと 1 件しかランドしません。fix は viem の
+  `nonceManager` を facilitator account の構築時に渡すこと。配線は
+  `server/index.ts` を参照。
+- **EIP-3009 はスマートアカウントで署名できない。** JPYC v2 の
+  `transferWithAuthorization` は純粋 `ecrecover`。エージェントの署名者は
+  EOA でなければなりません。スマートアカウントが保持する JPYC を動かす
+  には kawasekit の `transferJpyc()` UserOp 経路を使います。
+- **owner / agent / facilitator の分離は運用ポリシーで守る。** kawasekit
+  はこれらを結合することを禁止しませんが、脅威モデルとこの example は
+  3 つを独立 ID として扱います。
+
+## 次のステップ
+
+- すべての `--chain polygonAmoy` を `--chain polygon` に置換し、
+  `KAWASEKIT_ALLOW_MAINNET=1` を設定すれば mainnet 切替。
+- [observability adapter](/ja/examples/observability/) を facilitator の
+  `hooks` に配線すれば settlement の Grafana ダッシュボードが手に入る。
+- [脅威モデル](/ja/reference/security/) で各 EOA が compromise されたとき
+  に何ができ何ができないかを確認。

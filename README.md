@@ -225,6 +225,20 @@ The Japanese stablecoin ecosystem in 2026 is uniquely positioned:
 
 kawasekit aims to be the developer-facing layer that connects this stablecoin infrastructure to the global AI agent ecosystem.
 
+## Documentation
+
+The full documentation site is built from [docs/](./docs/) using Astro Starlight. Bilingual (English / 日本語), with a [Quick Start](./docs/src/content/docs/quickstart.mdx), [example walkthroughs](./docs/src/content/docs/examples/), and an auto-generated [API reference](./docs/src/content/docs/) driven by TypeDoc.
+
+Run locally:
+
+```bash
+cd docs
+pnpm install
+pnpm dev
+```
+
+The site will deploy to GitHub Pages on every push to `main` once Pages is enabled in the repository settings — see `.github/workflows/docs.yml`. The planned canonical URL is `kawasekit.k0yote.dev`.
+
 ## Contributing
 
 This is currently a solo project, but contributions will be welcomed once we hit M3. See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for guidelines.

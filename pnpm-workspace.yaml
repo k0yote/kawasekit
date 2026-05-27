@@ -8,8 +8,12 @@
 packages:
   - "."
   - "examples/*"
+  - "docs"
 
 # esbuild ships a postinstall script that fetches its native binary; it is a
 # transitive dependency of tsup and tsx and must be allowed to build.
 allowBuilds:
   esbuild: true
+  # Astro Starlight (docs/) uses sharp for image optimisation. Sharp ships
+  # a postinstall script that downloads its native binary.
+  sharp: true

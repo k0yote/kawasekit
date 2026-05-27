@@ -6,6 +6,12 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Astro (docs/) build + generated type artifacts
+docs/.astro/
+# starlight-typedoc writes generated API reference MDX into the source tree
+# at build time. They are derived from src/ JSDoc and should not be tracked.
+docs/src/content/docs/api/
+
 # Test / coverage
 coverage/
 

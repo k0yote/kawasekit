@@ -69,7 +69,7 @@ function runCli(
  */
 function extractJsonObject(stdout: string): unknown {
 	const lines = stdout.split("\n");
-	const startIdx = lines.findIndex((line) => line === "{");
+	const startIdx = lines.indexOf("{");
 	if (startIdx < 0) return undefined;
 	const endIdx = lines.findIndex((line, idx) => idx > startIdx && line === "}");
 	if (endIdx < 0) return undefined;

@@ -1,0 +1,156 @@
+---
+title: クイックスタート
+description: Polygon Amoy 上で JPYC 決済を成立させるまで、ゼロから 10 分。
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+ZeroDev プロジェクト、オーナー秘密鍵、Polygon Amoy 用の JPYC ファセット
+さえあれば、kawasekit でエージェントが JPYC を Polygon Amoy 上で決済する
+ところまで 10 分以内に辿り着けます。
+
+このウォークスルーは動く構成までの最短ルートです。より深いサンプル
+([エージェントペイウォール](/ja/examples/agent-x402-jpyc/)、
+[観測性](/ja/examples/observability/)) は同じプリミティブの上に積まれて
+います。
+
+## 前提
+
+- Node 22+
+- pnpm 11+
+- 使い捨ての Ethereum 秘密鍵 — testnet 用に新規生成してください。実資金
+  を持つオーナーキーは絶対に使わないこと
+- [ZeroDev](https://dashboard.zerodev.app) のプロジェクト ID
+- Polygon Amoy POL ([公式ファセット](https://faucet.polygon.technology/))
+- Polygon Amoy JPYC ([JPYC ファセット](https://faucet.jpyc.co.jp/))
+
+<Aside type="caution">
+kawasekit は **pre-alpha** です。初回 npm 公開
+(`kawasekit@0.1.0-alpha`) は準備中。現時点ではリポジトリをクローンして
+ワークスペースを直接使ってください — API surface は npm 公開版と同じ
+です。
+</Aside>
+
+## 手順
+
+<Steps>
+
+1. **リポジトリをクローン**
+
+   ```bash
+   git clone https://github.com/k0yote/kawasekit
+   cd kawasekit
+   pnpm install
+   pnpm --filter kawasekit build
+   ```
+
+2. **`.env` をスキャフォールド**
+
+   ```bash
+   pnpm cli init
+   cp .env.example .env
+   ```
+
+   `.env` を開き、`OWNER_PRIVATE_KEY` (使い捨て鍵) と
+   `ZERODEV_PROJECT_ID` を埋めてください。
+
+3. **スマートアカウントアドレスを計算**
+
+   ```bash
+   pnpm cli account create --chain polygonAmoy
+   ```
+
+   以下のような出力が出ます:
+
+   ```
+   Chain:                  Polygon Amoy testnet (80002)
+   Owner (EOA):            0x2f5eb6A1...
+   Smart account address:  0xdbe30607...
+   ```
+
+   この時点ではスマートアカウントは **counterfactual** アドレスです —
+   オーナーキーから決定論的に導出されますが、まだオンチェーンに deploy
+   されていません。最初の UserOp が paymaster 経由で deploy します。
+
+4. **スマートアカウントへ JPYC を入金**
+
+   ステップ 3 のスマートアカウントアドレス宛に Polygon Amoy JPYC を送金:
+
+   - [https://faucet.jpyc.co.jp/](https://faucet.jpyc.co.jp/)
+
+   このチュートリアルでは 1 JPYC あれば十分です。
+
+5. **セッションキーを発行**
+
+   セッションキーはエージェントが保持するキーです。オーナーが revocation
+   を制御し、セッションキーはオンチェーンの daily-limit ポリシーで制限
+   されます。
+
+   ```bash
+   pnpm cli session-key issue \
+     --chain polygonAmoy \
+     --ephemeral-session \
+     --max-per-tx 1 \
+     --max-per-day 10 \
+     --output envelope.json
+   ```
+
+   `--ephemeral-session` を付けると、この実行用に session-key 秘密鍵を
+   新規生成します。秘密鍵はコマンドの最後に表示されます — 必要なら
+   その場で保存してください (ディスクには保存されません)。
+
+6. **スマートアカウント経由で JPYC を送金**
+
+   オーナーはスマートアカウント経由で直接 JPYC を送金できます
+   (session-key を使うフローはエージェント example にあります):
+
+   ```bash
+   pnpm cli transfer \
+     --chain polygonAmoy \
+     --amount 0.001
+   ```
+
+   bundler tx hash と Polygonscan のリンクが出力されます。リンクを
+   開いて、kawasekit 経由の初の JPYC 送金が Polygon Amoy で確定する様子
+   を確認してください。
+
+</Steps>
+
+## いま何が起きたか
+
+- `kawasekit cli account create` はオーナーキーから Kernel v3.1
+  スマートアカウントを counterfactual に導出しました。オンチェーンへの
+  書き込みはまだ無し。
+- `kawasekit cli session-key issue` は session-key envelope (エージェント
+  がオーナーキーを見ずにスマートアカウントクライアントを復元するため
+  の可搬な JSON ドキュメント) を作成しました。
+- `kawasekit cli transfer` はスマートアカウントから `JPYC.transfer()`
+  を呼ぶ sponsored UserOp をブロードキャストしました。ガスは ZeroDev
+  の paymaster が POL で支払っています。
+
+同じプリミティブが以下に組み合わさります:
+
+- **x402 ペイウォール** — [エージェントペイウォール](/ja/examples/agent-x402-jpyc/)
+  を参照。
+- **観測性** — `kawasekit/observability/prometheus` を任意の kawasekit
+  surface に配線するとダッシュボードが埋まります。
+  [観測性](/ja/examples/observability/) を参照。
+
+## 次のステップ
+
+- [エージェントペイウォール example](/ja/examples/agent-x402-jpyc/) を
+  試す — エージェントが天気 API をコール単位で支払うデモ。
+- [CLI リファレンス](/ja/reference/cli/) で全コマンドを確認。
+- mainnet 移行前に [脅威モデル](/ja/reference/security/) を読む。
+
+## mainnet への移行
+
+ネットワークに触れるコマンドは `--chain polygonAmoy` (testnet) か
+`--chain polygon` (mainnet) を取ります。mainnet ブロードキャストは
+さらに `KAWASEKIT_ALLOW_MAINNET=1` を環境変数に設定する必要があります。
+実 JPYC + 実 POL を消費する意図があるときだけ設定してください。
+スケール前に 0.001 JPYC で gradual rollout する想定です。
+
+[v0.1.0 リリースノート](https://github.com/k0yote/kawasekit/blob/main/CHANGELOG.md)
+には初の mainnet ブロードキャスト tx URL がトレーサビリティのために
+記録される予定です。

@@ -1,0 +1,46 @@
+---
+title: Security
+description: Reporting channel, supported versions, and the threat model.
+---
+
+## Reporting a vulnerability
+
+**Do not open a public GitHub issue for security vulnerabilities.**
+
+Email **security@k0yote.dev** with:
+
+- A description of the vulnerability and its potential impact.
+- Steps to reproduce (proof-of-concept code if possible).
+- Affected version(s) and environment.
+
+Expect an initial acknowledgement within **72 hours**. We will keep you
+informed as we investigate and work toward a fix, and credit you in the
+release notes unless you prefer to remain anonymous.
+
+## Supported versions
+
+kawasekit is **pre-alpha** software. Until the `0.1.0` release, only the
+latest `main` branch receives security fixes. Milestone tags
+(`v0.0.0-mN`) are checkpoints — they do **not** receive backported fixes.
+
+## Threat model
+
+The layer-by-layer threat model used by external reviewers lives in
+[`docs/THREAT_MODEL.md`](https://github.com/k0yote/kawasekit/blob/main/docs/THREAT_MODEL.md).
+It covers:
+
+1. **EIP-3009 / x402 wire format** — cross-chain replay, MITM eavesdrop,
+   misadvertised EIP-712 domain.
+2. **Self-facilitator EOA** — key custody, concurrent settle nonce race,
+   DoS via repeated invalid `/verify`.
+3. **Session-key envelope** — bearer-grade combined with the session key,
+   revoke race, envelope policy fingerprinting.
+4. **Smart account boundary** — validator privilege escalation, UserOp
+   signature replay, EIP-3009 attempted from a smart-account `from`.
+5. **Agent runtime** — LLM prompt injection, budget guard bypass, tool
+   input forgery.
+
+The document closes with a **Known limitations** section that records
+gaps the SDK chooses not to close in 0.1.0 — including the
+reasoning-step idempotency gap surfaced by external feedback on the M3
+release announcement.

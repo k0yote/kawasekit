@@ -1,0 +1,38 @@
+---
+title: CLI
+description: kawasekit init / account / transfer / policy / session-key の使い方。
+---
+
+kawasekit CLI は `npm install -g kawasekit` で自動的にインストールされ、
+このリポジトリ内では `pnpm cli <args>` でも利用できます。
+
+## コマンド一覧
+
+| Command | 目的 |
+|---|---|
+| `kawasekit init` | カレントディレクトリに `.env.example` のスターターを書く |
+| `kawasekit account create --chain <c>` | オーナーキーからスマートアカウントアドレスを計算。`--deploy` で deploy UserOp を発射 |
+| `kawasekit transfer --chain <c> --amount <jpyc>` | sponsored UserOp で JPYC を送金 |
+| `kawasekit policy create --chain <c>` | 日次上限ポリシーを dry-run して JSON 出力 |
+| `kawasekit session-key issue` | オーナーがエージェント向けに session-key envelope を発行 |
+| `kawasekit session-key restore --envelope <path>` | エージェントが envelope からスマートアカウントクライアントを復元 |
+| `kawasekit session-key revoke --envelope <path>` | オーナーが session-key permission validator を uninstall |
+| `kawasekit session-key rotate --old-envelope <path>` | 旧 session を revoke、新 session を issue を一度に |
+
+## セーフティゲート
+
+- ネットワークに触れるすべてのコマンドは `--chain polygon` か
+  `--chain polygonAmoy` を必須にしています。デフォルト無し — オペレータが
+  明示的にネットワークを選ぶ必要があります。
+- mainnet ブロードキャストはさらに `KAWASEKIT_ALLOW_MAINNET=1` を環境変数
+  に設定しないと実行できません。本当に実資金を消費するときだけ設定して
+  ください。
+- `session-key issue` には `--ephemeral-session` フラグがあり、毎回新規
+  session-key 秘密鍵を生成します。本番運用での rotation パターンとして
+  推奨 — 同じスマートアカウントで long-lived session-key を re-use すると
+  validator-tombstone 系のバグ (M3 で発見) を踏みます。
+
+## ヘルプ
+
+`kawasekit --help` で全コマンド一覧、各コマンドの `--help` で詳細フラグ
+が確認できます。

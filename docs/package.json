@@ -1,0 +1,30 @@
+{
+	"name": "kawasekit-docs",
+	"private": true,
+	"version": "0.0.0",
+	"description": "kawasekit documentation site (Astro Starlight)",
+	"license": "Apache-2.0",
+	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
+	"scripts": {
+		"dev": "astro dev",
+		"build": "astro build",
+		"preview": "astro preview",
+		"typecheck": "astro check"
+	},
+	"dependencies": {
+		"@astrojs/starlight": "0.32.5",
+		"astro": "5.3.1",
+		"sharp": "0.33.5"
+	},
+	"devDependencies": {
+		"@astrojs/check": "^0.9.9",
+		"@types/node": "^22.0.0",
+		"starlight-typedoc": "^0.23.0",
+		"typedoc": "^0.28.19",
+		"typedoc-plugin-markdown": "^4.11.0",
+		"typescript": "6.0.3"
+	}
+}

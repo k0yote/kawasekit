@@ -1,0 +1,145 @@
+---
+title: Observability (Prometheus + Grafana)
+description: docker-compose up to see kawasekit metrics flowing into Grafana in 30 seconds.
+---
+
+import { Aside, Tabs, TabItem } from "@astrojs/starlight/components";
+
+The `examples/observability` workspace stands up a full Prometheus +
+Grafana stack and wires it to kawasekit's observability hooks via the
+`kawasekit/observability/prometheus` adapter. The goal is "30 seconds to
+a live dashboard" — no Polygon Amoy keys, no real paywall traffic.
+
+## What lights up
+
+| Panel | What it shows |
+|---|---|
+| verify rate (by network, result) | Throughput of facilitator `verify()` calls per chain, split into success / failure. |
+| settle rate (by network, result) | Same for `settle()`. Sustained failure on one network is a degraded-chain signal. |
+| verify duration p50/p95/p99 | Latency of off-chain validation work — typically under 200 ms. |
+| settle duration p50/p95/p99 | Latency of on-chain broadcast. Polygon mainnet typical p99 around 5 s. |
+| payment_required vs payment_accepted | 402 rate vs 200-after-payment rate. The gap is paywall hits that never settled. |
+| verify failure reason breakdown | Last-hour bar chart by x402 spec error code. |
+| client_payment rate | `wrapFetch` paywall round-trip success rate. |
+| client_payment failure reasons | Last-hour bar chart by failure label. |
+
+## Alert rules
+
+Four baseline Prometheus alert rules ship with the example. Adjust
+thresholds for your own SLOs:
+
+- **KawasekitVerifyFailureRateHigh** — verify failure ratio > 50% for 5 min.
+- **KawasekitSettleFailureRateHigh** — settle failure ratio > 20% for 5 min.
+- **KawasekitSettleLatencyHigh** — settle p99 > 30 s for 10 min.
+- **KawasekitClientPaymentDeclineRateHigh** — client budget guard
+  declining > 1/sec for 5 min (usually informational — the guard is doing
+  its job).
+
+## Run it
+
+You need Docker Desktop ≥ 4.32 (or Linux Docker ≥ 25), Node 22+, and pnpm 11+.
+
+<Tabs>
+<TabItem label="Demo server">
+
+```bash
+cd examples/observability
+pnpm install
+pnpm dev               # /metrics on :3001, synthetic events every ~1.5s
+```
+
+</TabItem>
+<TabItem label="Prometheus + Grafana">
+
+```bash
+cd examples/observability
+docker compose up -d   # Prometheus + Grafana running
+```
+
+</TabItem>
+</Tabs>
+
+Open:
+
+- Grafana — [http://localhost:3000](http://localhost:3000) (anonymous Viewer enabled by default; admin/admin for editing)
+- Prometheus — [http://localhost:9090](http://localhost:9090)
+- /metrics — [http://localhost:3001/metrics](http://localhost:3001/metrics)
+
+The `kawasekit observability` dashboard auto-loads via Grafana
+provisioning. Metrics start ticking across all 8 panels within ~20
+seconds of the first scrape.
+
+## Synthetic vs real paywall
+
+The demo server emits **synthetic events** by default — `onVerify`,
+`onSettle`, `onPaymentRequired`, `onPaymentAccepted`, `onClientPayment`
+fire on a timer with plausible success/failure mixes. This is on purpose:
+the example is about wiring metrics, not about another payment flow.
+
+To replace the synthetic events with a real kawasekit paywall, the wiring
+is a drop-in:
+
+```ts
+import { createSelfFacilitator, createX402Handler, wrapFetch } from "kawasekit";
+import { createPrometheusMetrics } from "kawasekit/observability/prometheus";
+
+const metrics = createPrometheusMetrics({ prefix: "kawasekit_" });
+
+const facilitator = createSelfFacilitator({
+  network: "testnet",
+  walletClient,
+  publicClient,
+  hooks: metrics.hooks,
+});
+
+const handler = createX402Handler({
+  facilitator,
+  requirementsFor: /* … */,
+  handler: /* … */,
+  hooks: metrics.hooks,
+});
+
+const fetch402 = wrapFetch({ signer, hooks: metrics.hooks });
+
+app.get("/metrics", async (req, res) => {
+  res.type(metrics.registry.contentType);
+  res.send(await metrics.registry.metrics());
+});
+```
+
+The same `metrics.hooks` object can be passed to all three surfaces.
+
+## OpenTelemetry
+
+If you push to an OTLP collector (Datadog, Mimir, New Relic, Honeycomb)
+instead of scraping Prometheus, swap the adapter:
+
+```ts
+import { metrics as otelMetrics } from "@opentelemetry/api";
+import { createOTLPMetrics } from "kawasekit/observability/otlp";
+
+const otel = createOTLPMetrics({
+  meter: otelMetrics.getMeter("kawasekit"),
+});
+
+const facilitator = createSelfFacilitator({
+  // …
+  hooks: otel.hooks,
+});
+```
+
+You own the `MeterProvider` + exporter wiring. The adapter just records
+into the meter — kawasekit never opens its own network connection.
+
+<Aside type="note">
+kawasekit ships **no** built-in telemetry. The adapters are opt-in, the
+operator chooses the destination, and the SDK core has no path that
+phones home. See plan decisions D2 and D11 for the rationale.
+</Aside>
+
+## Cleanup
+
+```bash
+docker compose down       # stop containers
+docker compose down -v    # also wipe Prometheus / Grafana storage
+```

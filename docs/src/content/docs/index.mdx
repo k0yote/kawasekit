@@ -1,0 +1,55 @@
+---
+title: kawasekit
+description: TypeScript SDK for stablecoin payments by AI agents. Japan-first, JPYC-native.
+template: splash
+hero:
+  tagline: A wallet that disappears. Agents pay per-call in stablecoins.
+  actions:
+    - text: Quick start
+      link: /quickstart/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/k0yote/kawasekit
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## What kawasekit is
+
+kawasekit is a TypeScript SDK that gives AI agents a wallet that disappears.
+Developers integrate the SDK; agents pay per-call in stablecoins (JPYC, USDC);
+end users never see gas, mnemonics, or chains.
+
+Built for the Japanese stablecoin landscape first — JPYC is the primary
+target — but the architecture is chain-agnostic and the same primitives work
+for any EIP-3009 + ERC-4337 token.
+
+<CardGrid stagger>
+	<Card title="x402-native" icon="rocket">
+		First-class implementation of the [x402 v2 payment
+		protocol](https://www.x402.org/) — every public API is shaped around the
+		`PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE` / `PAYMENT-RESPONSE` flow.
+	</Card>
+	<Card title="Smart account by default" icon="setting">
+		ERC-4337 v0.7 + ZeroDev Kernel v3.1. Session keys, daily-limit policies,
+		paymaster sponsorship. The agent never holds the user's owner key.
+	</Card>
+	<Card title="Observable out of the box" icon="document">
+		`kawasekit/observability/prometheus` and
+		`kawasekit/observability/otlp` ship as optional subpaths. Wire one
+		`hooks` object into every kawasekit surface and the dashboards fill in.
+	</Card>
+	<Card title="Japan-first, not Japan-only" icon="translate">
+		JPYC on Polygon today, Avalanche / Ethereum / Kaia on the roadmap.
+		x402 is chain-agnostic, so the same agent code follows the issuer.
+	</Card>
+</CardGrid>
+
+## Status
+
+Pre-alpha. The first npm publish (`kawasekit@0.1.0-alpha`) is in
+preparation as part of the M4 milestone. See the [GitHub
+project](https://github.com/k0yote/kawasekit) for current progress and the
+[security policy](/reference/security/) for how to report issues.

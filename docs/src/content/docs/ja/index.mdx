@@ -1,0 +1,58 @@
+---
+title: kawasekit
+description: AI エージェント向けのステーブルコイン決済 TypeScript SDK。Japan-first、JPYC ネイティブ。
+template: splash
+hero:
+  tagline: 消えていく財布。エージェントが呼び出しごとにステーブルコインで支払う。
+  actions:
+    - text: クイックスタート
+      link: /ja/quickstart/
+      icon: right-arrow
+    - text: GitHub で見る
+      link: https://github.com/k0yote/kawasekit
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## kawasekit とは
+
+kawasekit は AI エージェントに「消えていく財布」を提供する TypeScript SDK
+です。開発者が SDK を組み込み、エージェントは呼び出しごとに JPYC や USDC
+で支払い、エンドユーザーはガス代やニーモニック、チェーンの存在を意識する
+必要がありません。
+
+日本のステーブルコインエコシステム (特に JPYC) を最初のターゲットとして
+います。アーキテクチャはチェーン非依存で、EIP-3009 + ERC-4337
+対応のトークンであれば同じ仕組みが使えます。
+
+<CardGrid stagger>
+	<Card title="x402 ネイティブ" icon="rocket">
+		[x402 v2 決済プロトコル](https://www.x402.org/) のファーストクラス実装。
+		`PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE` / `PAYMENT-RESPONSE` の流れを
+		公開 API すべてが共有します。
+	</Card>
+	<Card title="スマートアカウント前提" icon="setting">
+		ERC-4337 v0.7 + ZeroDev Kernel v3.1。セッションキー、日次上限ポリシー、
+		ペイマスタースポンサー。エージェントはオーナーキーを持ちません。
+	</Card>
+	<Card title="観測性が標準装備" icon="document">
+		`kawasekit/observability/prometheus` と
+		`kawasekit/observability/otlp` がオプショナル subpath として同梱。
+		`hooks` オブジェクトをひとつ kawasekit の各 surface に配線すれば
+		ダッシュボードが埋まります。
+	</Card>
+	<Card title="Japan-first、Japan-only ではない" icon="translate">
+		現状は Polygon の JPYC、ロードマップに Avalanche / Ethereum / Kaia。
+		x402 はチェーン非依存なので、同じエージェントコードが発行体を追えます。
+	</Card>
+</CardGrid>
+
+## ステータス
+
+pre-alpha 段階です。初回 npm 公開 (`kawasekit@0.1.0-alpha`) は M4
+マイルストーンの一部として準備中です。最新の進捗は
+[GitHub プロジェクト](https://github.com/k0yote/kawasekit) を、
+脆弱性の報告は[セキュリティポリシー](/ja/reference/security/) を
+参照してください。

@@ -1,0 +1,151 @@
+---
+title: Quick start
+description: Get from zero to a settled JPYC payment on Polygon Amoy in 10 minutes.
+---
+
+import { Steps, Tabs, TabItem, Aside, Code } from "@astrojs/starlight/components";
+
+kawasekit moves agents from a settled JPYC payment on Polygon Amoy in under
+ten minutes, using only a ZeroDev project, an owner private key, and the
+public Polygon Amoy faucet for JPYC.
+
+This walkthrough gets you to a working setup. The deeper examples
+([agent paywall](/examples/agent-x402-jpyc/),
+[observability](/examples/observability/)) build on the same primitives.
+
+## Prerequisites
+
+- Node 22+
+- pnpm 11+
+- A burner Ethereum private key — use a fresh one for testnet, never an
+  owner key that holds real funds
+- A [ZeroDev](https://dashboard.zerodev.app) project ID
+- Polygon Amoy POL from the [official faucet](https://faucet.polygon.technology/)
+- Polygon Amoy JPYC from the [JPYC faucet](https://faucet.jpyc.co.jp/)
+
+<Aside type="caution">
+kawasekit is **pre-alpha**. The first npm publish (`kawasekit@0.1.0-alpha`)
+is in preparation. For now, clone the repository and use the workspace
+directly — the API surface is the same as what will publish to npm.
+</Aside>
+
+## Steps
+
+<Steps>
+
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/k0yote/kawasekit
+   cd kawasekit
+   pnpm install
+   pnpm --filter kawasekit build
+   ```
+
+2. **Scaffold a `.env`**
+
+   ```bash
+   pnpm cli init
+   cp .env.example .env
+   ```
+
+   Open `.env` and fill in `OWNER_PRIVATE_KEY` (the burner key) and
+   `ZERODEV_PROJECT_ID`.
+
+3. **Compute the smart-account address**
+
+   ```bash
+   pnpm cli account create --chain polygonAmoy
+   ```
+
+   You will see something like:
+
+   ```
+   Chain:                  Polygon Amoy testnet (80002)
+   Owner (EOA):            0x2f5eb6A1...
+   Smart account address:  0xdbe30607...
+   ```
+
+   The smart account is a **counterfactual** address at this point — it
+   exists deterministically based on your owner key but has not been
+   deployed on-chain. The first UserOp deploys it via the paymaster.
+
+4. **Fund the smart account**
+
+   Send Polygon Amoy JPYC to the smart account address from step 3:
+
+   - [https://faucet.jpyc.co.jp/](https://faucet.jpyc.co.jp/)
+
+   You only need 1 JPYC for the rest of this tutorial.
+
+5. **Issue a session key**
+
+   The session key is what an agent holds. The owner controls revocation;
+   the session key is bounded by an on-chain daily-limit policy.
+
+   ```bash
+   pnpm cli session-key issue \
+     --chain polygonAmoy \
+     --ephemeral-session \
+     --max-per-tx 1 \
+     --max-per-day 10 \
+     --output envelope.json
+   ```
+
+   `--ephemeral-session` generates a fresh session-key private key for
+   this run. The key is printed at the end of the command — save it now,
+   it is not stored to disk.
+
+6. **Transfer JPYC via the smart account**
+
+   The owner can transfer JPYC directly through the smart account (the
+   session-key path lives in the agent example):
+
+   ```bash
+   pnpm cli transfer \
+     --chain polygonAmoy \
+     --amount 0.001
+   ```
+
+   The output prints the bundler tx hash and a Polygonscan link. Open it
+   to see your first kawasekit-driven JPYC transfer settle on Polygon
+   Amoy.
+
+</Steps>
+
+## What just happened
+
+- `kawasekit cli account create` derived a Kernel v3.1 smart account
+  counterfactually from your owner key. No on-chain action yet.
+- `kawasekit cli session-key issue` built a session-key envelope — a
+  portable JSON document the agent will use to restore the smart-account
+  client without ever seeing the owner key.
+- `kawasekit cli transfer` broadcast a sponsored UserOp that calls
+  `JPYC.transfer()` from the smart account. The paymaster (ZeroDev) paid
+  POL for gas.
+
+The same primitives compose into:
+
+- An **x402 paywall** — see [Agent paywall](/examples/agent-x402-jpyc/).
+- **Observability** — wire `kawasekit/observability/prometheus` to any
+  kawasekit surface and the dashboards fill in. See
+  [Observability](/examples/observability/).
+
+## Next steps
+
+- Try the [agent paywall example](/examples/agent-x402-jpyc/) — an
+  agent that pays for a weather API call-by-call.
+- Read the [CLI reference](/reference/cli/) for the full command surface.
+- Read the [threat model](/reference/security/) before you take this to
+  mainnet.
+
+## Going to mainnet
+
+Every command that touches a network takes `--chain polygonAmoy` (testnet)
+or `--chain polygon` (mainnet). Mainnet broadcasts additionally require
+`KAWASEKIT_ALLOW_MAINNET=1` in the environment. Set this only when you
+intend to spend real JPYC + real POL. Plan to start with a 0.001 JPYC
+gradual rollout before scaling.
+
+The [v0.1.0 release notes](https://github.com/k0yote/kawasekit/blob/main/CHANGELOG.md)
+will record the first mainnet broadcast tx URLs for traceability.

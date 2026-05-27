@@ -1,0 +1,39 @@
+---
+title: CLI
+description: kawasekit init / account / transfer / policy / session-key.
+---
+
+The kawasekit CLI is installed automatically when you `npm install -g
+kawasekit` and is also available via `pnpm cli <args>` in this repository.
+
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `kawasekit init` | Scaffold a starter `.env.example` in the current directory. |
+| `kawasekit account create --chain <c>` | Compute the smart-account address for an owner key; pass `--deploy` to broadcast the deploy UserOp. |
+| `kawasekit transfer --chain <c> --amount <jpyc>` | Send JPYC via a sponsored UserOp. |
+| `kawasekit policy create --chain <c>` | Dry-run the daily-limit policy and print the resolved parameters as JSON. |
+| `kawasekit session-key issue` | Owner issues a session-key envelope for the agent. |
+| `kawasekit session-key restore --envelope <path>` | Agent rebuilds a smart-account client from an envelope. |
+| `kawasekit session-key revoke --envelope <path>` | Owner uninstalls a session-key permission validator. |
+| `kawasekit session-key rotate --old-envelope <path>` | Revoke the old session and issue a new one in one shot. |
+
+## Safety gates
+
+- Every command that touches a network requires `--chain polygon` or
+  `--chain polygonAmoy`. There is no default — the operator commits to a
+  network in writing.
+- Mainnet broadcasts additionally require `KAWASEKIT_ALLOW_MAINNET=1` in
+  the environment. Set it explicitly only when you intend to spend real
+  funds.
+- `session-key issue` accepts `--ephemeral-session` to generate a fresh
+  session-key private key per run. This is the recommended production
+  rotation pattern — it sidesteps the validator-tombstone class of bugs
+  that hit you if you re-use a long-lived session key across
+  issue/revoke cycles on the same smart account.
+
+## Help
+
+`kawasekit --help` lists every command. Each command has its own
+`--help` with the full flag matrix.

@@ -1,0 +1,44 @@
+---
+title: セキュリティ
+description: 報告先、サポートバージョン、脅威モデル。
+---
+
+## 脆弱性の報告
+
+**セキュリティ脆弱性に GitHub issue を公開で立てないでください。**
+
+以下を **security@k0yote.dev** にメールしてください:
+
+- 脆弱性の内容と想定される影響
+- 再現手順 (可能なら proof-of-concept コード)
+- 影響するバージョンと環境
+
+**72 時間以内** に初回受領通知を返します。調査と修正の進捗を共有し、
+報告者は匿名希望でない限りリリースノートでクレジット表記します。
+
+## サポートバージョン
+
+kawasekit は **pre-alpha** です。`0.1.0` リリースまでは `main`
+ブランチのみが脆弱性修正を受けます。マイルストーンタグ (`v0.0.0-mN`) は
+スナップショットであり、修正は backport されません。
+
+## 脅威モデル
+
+外部レビュアー向けの layer-by-layer threat model は
+[`docs/THREAT_MODEL.md`](https://github.com/k0yote/kawasekit/blob/main/docs/THREAT_MODEL.md)
+にあります。カバー範囲:
+
+1. **EIP-3009 / x402 wire format** — クロスチェーン replay、MITM 盗聴、
+   悪意ある EIP-712 ドメイン広告
+2. **Self-facilitator EOA** — 鍵カストディ、並列 settle の nonce race、
+   `/verify` 連打による DoS
+3. **Session-key envelope** — envelope と session-key の組み合わせが
+   bearer-grade、revoke race、ポリシーフィンガープリンティング
+4. **Smart account boundary** — validator 権限昇格、UserOp 署名の replay、
+   smart-account `from` で EIP-3009 を試みるケース
+5. **Agent runtime** — LLM プロンプトインジェクション、予算ガード回避、
+   ツール入力偽装
+
+末尾の **Known limitations** セクションで、0.1.0 で意図的に塞がない
+ギャップ (M3 公開後の外部フィードバックで判明した reasoning-step
+冪等性ギャップ等) を記録しています。

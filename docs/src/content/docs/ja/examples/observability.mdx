@@ -1,0 +1,146 @@
+---
+title: 観測性 (Prometheus + Grafana)
+description: docker-compose up で kawasekit メトリクスを 30 秒で Grafana に表示。
+---
+
+import { Aside, Tabs, TabItem } from "@astrojs/starlight/components";
+
+`examples/observability` は完全な Prometheus + Grafana スタックを立ち上げ、
+`kawasekit/observability/prometheus` アダプタを通して kawasekit の
+observability hooks に接続するワークスペースです。目標は「30 秒で動く
+ダッシュボードを見せる」こと — Polygon Amoy のキーも実トラフィックも
+不要です。
+
+## 表示されるパネル
+
+| パネル | 内容 |
+|---|---|
+| verify rate (by network, result) | facilitator `verify()` のチェーン別スループット、success / failure 別 |
+| settle rate (by network, result) | `settle()` の同等。あるネットワークだけ持続的に failure → そのチェーンが degraded のサイン |
+| verify duration p50/p95/p99 | オフチェーン検証の latency — 通常 200 ms 未満 |
+| settle duration p50/p95/p99 | オンチェーンブロードキャストの latency。Polygon mainnet なら typical p99 = 5 秒前後 |
+| payment_required vs payment_accepted | 402 レートと支払い後 200 レート。差分は settle に至らなかったペイウォールヒット |
+| verify failure reason breakdown | 直近 1 時間の x402 spec error code 内訳 (棒グラフ) |
+| client_payment rate | `wrapFetch` のペイウォール往復成功率 |
+| client_payment failure reasons | 直近 1 時間の failure ラベル内訳 (棒グラフ) |
+
+## アラートルール
+
+example には Prometheus アラートルールが 4 件同梱されています。閾値は自身の
+SLO に合わせて調整してください:
+
+- **KawasekitVerifyFailureRateHigh** — verify failure ratio が 5 分間 50%
+  超え
+- **KawasekitSettleFailureRateHigh** — settle failure ratio が 5 分間 20%
+  超え
+- **KawasekitSettleLatencyHigh** — settle p99 が 10 分間 30 秒超え
+- **KawasekitClientPaymentDeclineRateHigh** — クライアント側の予算ガード
+  が 5 分間 1 件/秒 を超えて拒否 (通常は情報的 — ガードが機能している証)
+
+## 動かす
+
+Docker Desktop ≥ 4.32 (or Linux Docker ≥ 25)、Node 22+、pnpm 11+ が必要。
+
+<Tabs>
+<TabItem label="Demo サーバー">
+
+```bash
+cd examples/observability
+pnpm install
+pnpm dev               # /metrics on :3001、合成イベントを ~1.5 秒ごと
+```
+
+</TabItem>
+<TabItem label="Prometheus + Grafana">
+
+```bash
+cd examples/observability
+docker compose up -d   # Prometheus + Grafana を起動
+```
+
+</TabItem>
+</Tabs>
+
+開く URL:
+
+- Grafana — [http://localhost:3000](http://localhost:3000) (anonymous Viewer
+  デフォルト有効、編集は admin/admin)
+- Prometheus — [http://localhost:9090](http://localhost:9090)
+- /metrics — [http://localhost:3001/metrics](http://localhost:3001/metrics)
+
+`kawasekit observability` ダッシュボードは Grafana provisioning で自動 load
+されます。最初の scrape から ~20 秒で全 8 パネルにメトリクスが流れ始めます。
+
+## 合成イベント vs 実ペイウォール
+
+デモサーバーはデフォルトで **合成イベント** を発火します — `onVerify`、
+`onSettle`、`onPaymentRequired`、`onPaymentAccepted`、`onClientPayment`
+を success / failure の妥当なミックスで定期発射。これは意図的: example
+は配線とメトリクス層のデモで、もう一つのペイメントフローではないため。
+
+合成イベントを実ペイウォールに置き換える配線は drop-in です:
+
+```ts
+import { createSelfFacilitator, createX402Handler, wrapFetch } from "kawasekit";
+import { createPrometheusMetrics } from "kawasekit/observability/prometheus";
+
+const metrics = createPrometheusMetrics({ prefix: "kawasekit_" });
+
+const facilitator = createSelfFacilitator({
+  network: "testnet",
+  walletClient,
+  publicClient,
+  hooks: metrics.hooks,
+});
+
+const handler = createX402Handler({
+  facilitator,
+  requirementsFor: /* … */,
+  handler: /* … */,
+  hooks: metrics.hooks,
+});
+
+const fetch402 = wrapFetch({ signer, hooks: metrics.hooks });
+
+app.get("/metrics", async (req, res) => {
+  res.type(metrics.registry.contentType);
+  res.send(await metrics.registry.metrics());
+});
+```
+
+同じ `metrics.hooks` オブジェクトを 3 つの surface すべてに渡せます。
+
+## OpenTelemetry
+
+Prometheus を scrape する代わりに OTLP collector (Datadog、Mimir、
+New Relic、Honeycomb 等) に push したい場合はアダプタを差し替えます:
+
+```ts
+import { metrics as otelMetrics } from "@opentelemetry/api";
+import { createOTLPMetrics } from "kawasekit/observability/otlp";
+
+const otel = createOTLPMetrics({
+  meter: otelMetrics.getMeter("kawasekit"),
+});
+
+const facilitator = createSelfFacilitator({
+  // …
+  hooks: otel.hooks,
+});
+```
+
+`MeterProvider` + exporter の配線はあなたが所有します。アダプタは meter
+に記録するだけで、kawasekit がネットワーク接続を開くことはありません。
+
+<Aside type="note">
+kawasekit には built-in テレメトリは **ありません**。アダプタは opt-in、
+送信先はオペレータの選択、SDK コアには phone home する経路がありません。
+方針の根拠は plan D2 / D11 を参照。
+</Aside>
+
+## クリーンアップ
+
+```bash
+docker compose down       # コンテナ停止
+docker compose down -v    # Prometheus / Grafana ストレージも消す
+```
