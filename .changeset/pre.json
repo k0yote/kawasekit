@@ -7,5 +7,9 @@
     "agent-x402-jpyc": "0.0.0",
     "observability": "0.0.0"
   },
-  "changesets": []
+  "changesets": [
+    "m2-jpyc-transfer-policy",
+    "m3-x402-session-example",
+    "m4-release"
+  ]
 }
