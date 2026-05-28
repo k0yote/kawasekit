@@ -67,10 +67,14 @@ the workspace's dependencies, the build pipeline that produces the
 
 ### Trust assumptions
 
-- The operator's pnpm 11 client honours the `minimumReleaseAge` default
-  of 1 day (24 h hold on newly published versions). Documented in
-  `CLAUDE.md`. Overriding requires an explicit
-  `--config.minimumReleaseAge=0` and is policy-gated.
+- `pnpm-workspace.yaml` **explicitly sets `minimumReleaseAge: 1d`** (24 h
+  hold on newly published versions), and both `ci.yml` and `release.yml`
+  assert this value via `pnpm config get minimumReleaseAge` before any
+  `pnpm install` — operator drift fails the workflow loudly instead of
+  silently. This removes the dependency on operator-side pnpm client
+  defaults for kawasekit's own build. Operators using `npm` or `yarn`
+  in their own consumer projects fall back to whatever their client
+  enforces (out of kawasekit's control).
 - Only the dependencies explicitly listed in `pnpm-workspace.yaml`'s
   `allowBuilds` may run postinstall scripts. Currently the allowlist
   contains `esbuild` (tsup / tsx dependency) and `sharp` (Astro
@@ -88,7 +92,7 @@ the workspace's dependencies, the build pipeline that produces the
 
 | # | Threat | Verdict | Notes |
 |---|---|---|---|
-| 0.1 | Dependency supply chain compromise (newly published malicious version of a transitive dep) | ✅ Mitigated | `pnpm-workspace.yaml` relies on pnpm 11's default `minimumReleaseAge: 1 day`. Any package published less than 24 h ago is blocked from install. Combined with `pnpm install --frozen-lockfile` in CI, a freshly compromised version cannot land in a build without a lockfile change reviewed in a PR. |
+| 0.1 | Dependency supply chain compromise (newly published malicious version of a transitive dep) | ✅ Mitigated | `pnpm-workspace.yaml` **explicitly** sets `minimumReleaseAge: 1d` (not just relying on pnpm 11 client defaults). Any package published less than 24 h ago is blocked from install. Both `.github/workflows/ci.yml` and `release.yml` run an `Assert supply chain policy` step that calls `pnpm config get minimumReleaseAge` and fails the workflow if the value drifts from `1d`. Combined with `pnpm install --frozen-lockfile`, a freshly compromised version cannot land in a build without a lockfile change reviewed in a PR — and that PR's CI run re-asserts the policy. |
 | 0.2 | Postinstall-script arbitrary code execution | ✅ Mitigated | `pnpm-workspace.yaml#allowBuilds` is the closed allowlist for packages whose postinstall script may run. Today: `esbuild` and `sharp`. Adding a new postinstall-script dependency requires an explicit policy edit reviewed in a PR. |
 | 0.3 | Published artefact tampering (npm registry version differs from source) | ✅ Mitigated | `package.json#publishConfig.provenance: true` + GitHub Actions OIDC (`.github/workflows/release.yml`) ships SLSA v1 provenance attestation with every publish. `npm view kawasekit@<version> --json` exposes the attestation URL; consumers can verify the artefact was built from the exact `kawasekit` commit on `main` by the canonical workflow. `docs/RELEASE_VERIFICATION.md` is the operator runbook for this check on every publish. |
 | 0.4 | Production dependency version drift | ✅ Mitigated | All entries in `package.json#dependencies` are exact-pinned (verified: `@zerodev/ecdsa-validator` 5.4.9, `@zerodev/permissions` 5.5.14, `@zerodev/sdk` 5.5.10, `commander` 13.1.0, `tslib` 2.8.1, `viem` 2.50.4 — no `^` or `~`). A consumer who installs `kawasekit@0.1.0-alpha.0` gets the same dependency tree everyone else does at that version. |
@@ -559,3 +563,4 @@ reader can audit the integrity of the threat model over time.
 | 2026-05-28 | k0yote | Implemented §6.5: `createSelfFacilitator` now performs a construction-time check on `walletClient.account.nonceManager` and throws with an actionable error if absent. Threat 2.2 promoted from `⚠️ Operator responsibility` back to `✅ Mitigated`. §6.5 marked **closed**. Callsites updated: `scripts/07-x402-self-settle.ts` and `src/x402/facilitator.self.test.ts` (test scaffold) now attach `nonceManager`. New unit tests cover the throw path and the happy path. |
 | 2026-05-28 | k0yote | Implemented §6.7: `src/x402/encoding.ts` `BASE64_REGEX` tightened to RFC 4648 §4 canonical form. Threat 1.7 promoted from split `✅ canonical / 🟡 non-canonical` to unified `✅ Mitigated`. §6.7 marked **closed**. `src/x402/encoding.test.ts` gained a 13-case adversarial corpus under "RFC 4648 canonical enforcement (threat 1.7 / §6.7)" plus a positive control proving the regex does not over-reject. |
 | 2026-05-28 | k0yote | Implemented §6.6: `CreateSelfFacilitatorParams` gained a `confirmations?: number` option, threaded into `waitForTransactionReceipt({ confirmations })`. Chain-aware default = `1` (testnet) / `4` (mainnet). Threat 2.8 promoted from `⚠️ Operator responsibility` to `✅ Mitigated`. §6.6 marked **closed**, with a tuning-guidance table per per-call value range. All three §6.x post-M4 follow-ups (§6.5, §6.6, §6.7) are now closed — the only open §6 items are intentional gaps documented for M5+ (idempotency layer §6.1, envelope encryption §6.2, soft revoke §6.3, on-chain budget telemetry §6.4). |
+| 2026-05-29 | k0yote | Closed `THREAT_MODEL_REVIEW_2026-05-29.md` **C3**: `pnpm-workspace.yaml` now explicitly sets `minimumReleaseAge: 1d` (was relying on pnpm 11 client default). Both `ci.yml` and `release.yml` added an `Assert supply chain policy` step that calls `pnpm config get minimumReleaseAge` and fails the workflow if the value drifts. §0.5 trust assumption + Threat 0.1 notes rewritten to cite the explicit policy + CI assertion. Removes dependency on operator-side pnpm client defaults for kawasekit's own build. |
