@@ -50,6 +50,55 @@ document and find every threat the SDK believes it has not solved.
 
 ---
 
+## 0.5. Layer 0 — Supply chain & build integrity
+
+### Surface
+
+kawasekit ships to npm as `kawasekit@0.1.0-alpha.0` (and onward) — every
+consumer pulls the package + its dependency tree into their own trust
+boundary. The supply chain surface covers the kawasekit package itself,
+the workspace's dependencies, the build pipeline that produces the
+`dist/` shipped to npm, and the npm registry artefact.
+
+### Trust assumptions
+
+- The operator's pnpm 11 client honours the `minimumReleaseAge` default
+  of 1 day (24 h hold on newly published versions). Documented in
+  `CLAUDE.md`. Overriding requires an explicit
+  `--config.minimumReleaseAge=0` and is policy-gated.
+- Only the dependencies explicitly listed in `pnpm-workspace.yaml`'s
+  `allowBuilds` may run postinstall scripts. Currently the allowlist
+  contains `esbuild` (tsup / tsx dependency) and `sharp` (Astro
+  Starlight). Any new postinstall-script dependency requires an explicit
+  policy entry.
+- The build runs in GitHub Actions on `release.yml` only, with OIDC
+  identity. npm Trusted Publishing is the sole publish path; the
+  package's npm settings are set to "Require two-factor authentication
+  and disallow tokens" so no long-lived credential can publish.
+- Production dependencies (`package.json#dependencies`) are pinned to
+  exact versions — no `^` or `~`. Devs and transitive deps follow the
+  lockfile.
+
+### Threats considered
+
+| # | Threat | Verdict | Notes |
+|---|---|---|---|
+| 0.1 | Dependency supply chain compromise (newly published malicious version of a transitive dep) | ✅ Mitigated | `pnpm-workspace.yaml` relies on pnpm 11's default `minimumReleaseAge: 1 day`. Any package published less than 24 h ago is blocked from install. Combined with `pnpm install --frozen-lockfile` in CI, a freshly compromised version cannot land in a build without a lockfile change reviewed in a PR. |
+| 0.2 | Postinstall-script arbitrary code execution | ✅ Mitigated | `pnpm-workspace.yaml#allowBuilds` is the closed allowlist for packages whose postinstall script may run. Today: `esbuild` and `sharp`. Adding a new postinstall-script dependency requires an explicit policy edit reviewed in a PR. |
+| 0.3 | Published artefact tampering (npm registry version differs from source) | ✅ Mitigated | `package.json#publishConfig.provenance: true` + GitHub Actions OIDC (`.github/workflows/release.yml`) ships SLSA v1 provenance attestation with every publish. `npm view kawasekit@<version> --json` exposes the attestation URL; consumers can verify the artefact was built from the exact `kawasekit` commit on `main` by the canonical workflow. `docs/RELEASE_VERIFICATION.md` is the operator runbook for this check on every publish. |
+| 0.4 | Production dependency version drift | ✅ Mitigated | All entries in `package.json#dependencies` are exact-pinned (verified: `@zerodev/ecdsa-validator` 5.4.9, `@zerodev/permissions` 5.5.14, `@zerodev/sdk` 5.5.10, `commander` 13.1.0, `tslib` 2.8.1, `viem` 2.50.4 — no `^` or `~`). A consumer who installs `kawasekit@0.1.0-alpha.0` gets the same dependency tree everyone else does at that version. |
+| 0.5 | Bin command privilege escalation | ⚠️ Operator responsibility | `kawasekit/dist/cli/index.cjs` becomes a PATH-resolvable binary on global install. The CLI reads `.env` from the operator's cwd and accepts private-key flags. **Recommendation**: do not install `kawasekit` globally on a multi-user machine; use `pnpm add kawasekit` in project scope. |
+
+### Where the mitigations live
+
+- `pnpm-workspace.yaml` — `minimumReleaseAge` + `allowBuilds` policy
+- `CLAUDE.md` (Supply Chain Policy section) — operator-facing rationale
+- `package.json#dependencies` — exact-pin policy enforcement (review at PR time)
+- `package.json#publishConfig` + `.github/workflows/release.yml` — provenance attestation pipeline
+- `docs/RELEASE_VERIFICATION.md` — per-publish verification runbook
+
+---
+
 ## 1. Layer 1 — EIP-3009 / x402 wire format
 
 ### Surface
@@ -79,14 +128,17 @@ document and find every threat the SDK believes it has not solved.
 
 | # | Threat | Verdict | Notes |
 |---|---|---|---|
-| 1.1 | Cross-chain replay (same JPYC address, different chain) | ✅ Mitigated | `chainId` is bound into the EIP-712 domain on signing (`src/x402/client.ts`, `signTransferWithAuthorization`) and verified on settle (`facilitator.ts` `recoverTypedDataAddress`). A signature with `chainId=0` would mathematically replay, but the SDK never emits one — `chainId` is always derived from the signer chain. |
+| 1.1 | Cross-chain replay (same JPYC address, different chain) | ✅ Mitigated | This mitigation depends on JPYC v2's domain separator being chain-aware. Verified empirically: `fiat/EIP712.sol:43` reads `chainid := chainid()` inline assembly when computing the separator, and `fiat/EIP712Domain.sol:54` additionally guards the cached separator with `if (block.chainid == CHAIN_ID)` — after a hard fork the contract recomputes the separator from `block.chainid`. JPYC v2 deployments on Ethereum / Polygon / Polygon Amoy / Avalanche therefore produce **different** domain separators despite sharing the address, so the recovered signer for a chain-A signature submitted on chain B mismatches `from` and `require(recovered == from)` reverts. kawasekit always populates `chainId` from the signer chain (`src/x402/client.ts`, `signTransferWithAuthorization`). §0 lists the JPYC contract as out of scope but this threat's defence depends on its behaviour, so the empirical reference is recorded here. |
 | 1.2 | Cross-chain replay (same chain, attempted nonce reuse) | ✅ Mitigated | `generateAuthorizationNonce()` returns a 32-byte cryptographic random; the on-chain `authorizationState` mapping rejects any reuse at the token contract. The facilitator additionally pre-checks `authorizationState` in `verify` to avoid a wasted gas tx. |
-| 1.3 | MITM eavesdrop + race-broadcast of `PAYMENT-SIGNATURE` | ⚠️ Operator responsibility | The signed authorization is bearer-grade until on-chain inclusion. An attacker who reads the header before the legitimate facilitator submits can race-broadcast it on their own. **The x402 spec assumes HTTPS in production.** kawasekit produces no plain-HTTP examples and the Hono adapter does not enforce TLS — the integrator must. |
+| 1.3 | MITM eavesdrop + race-broadcast of `PAYMENT-SIGNATURE` | ⚠️ Operator responsibility | The signed authorization is bearer-grade until on-chain inclusion. An attacker who reads the header before the legitimate facilitator submits can race-broadcast it on their own. **The x402 spec assumes HTTPS in production.** kawasekit produces no plain-HTTP examples and the Hono adapter does not enforce TLS — the integrator must. The authorization fixes `to`, so even if MITM captures the signature it cannot redirect funds; the attack reduces to settlement-flow griefing (the legitimate facilitator's submit fails because nonce is already consumed), not theft. |
 | 1.4 | Misadvertised EIP-712 domain by a malicious server | ⚠️ Operator responsibility | A server can advertise `extra.name="Evil"` to coerce a signature that recovers against a different domain. kawasekit's `createX402PaymentSigner` accepts a `domainOverride` so a client that knows the right token can pin it. JPYC v2 falls through to the well-known hint automatically. **Recommendation**: callers signing for non-JPYC assets should pass `domainOverride` against a hard-coded whitelist. |
 | 1.5 | Time-window manipulation (replay outside `validAfter`/`validBefore`) | ✅ Mitigated | `verify` checks `now ∈ [validAfter, validBefore)` and returns distinct error codes. The default lifetime (`X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS = 300`) bounds the bearer-window. |
 | 1.6 | Network / chainId mismatch silently accepted | ✅ Mitigated | M4-1 added a required `network: "mainnet" \| "testnet"` argument to both `createSelfFacilitator` and `createX402PaymentSigner`, and a runtime check throws if it disagrees with the chain identity. This catches the "testnet PK accidentally hitting mainnet RPC" failure mode at construction or sign time, before any broadcast. |
-| 1.7 | Header smuggling / base64 malleability | ✅ Mitigated | The encoding layer (`src/x402/encoding.ts`) is byte-equivalence tested against the upstream `@x402/core` reference (`encoding.conformance.test.ts`). |
+| 1.7 | Header smuggling / base64 malleability | ✅ (canonical) / 🟡 (non-canonical) | The encoding layer (`src/x402/encoding.ts`) is byte-equivalence tested against the upstream `@x402/core` reference (`encoding.conformance.test.ts`). Adversarial decoding cases are covered in `src/x402/encoding.test.ts:167-185` (rejects non-base64 alphabet, URL-safe `-_`, valid base64 of non-JSON, and valid JSON of non-object). Non-canonical inputs that re-encode differently than canonical form (e.g. overlong padding) are **not** explicitly exercised; the practical blast radius is limited because the downstream JSON parser rejects bytes that do not round-trip cleanly, but a targeted adversarial-decoding test should land in v0.1.0-alpha.N. Tracked under §6.7. |
 | 1.8 | Reasoning-step duplicate payment (same agent intent, multiple calls) | 🟡 Known limitation | See §6.1. The x402 wire format guarantees only **call-level** idempotency via the EIP-3009 nonce. A reasoning-step layer is missing. |
+| 1.9 | verify→settle TOCTOU (payer moves funds between verify and settle) | ⚠️ Operator responsibility | After `verify` passes the balance + nonce-not-used checks, the payer can move JPYC out of their EOA before `settle` lands; the on-chain `transferWithAuthorization` then reverts with insufficient balance. The facilitator already pays gas. This is griefing / DoS, not theft. **Recommendation**: never treat a `verify` success as "payment confirmed" — wait for the `settle` receipt (`waitForTransactionReceipt`) before delivering paid content. kawasekit's `createSelfFacilitator` does this by default. Operators wiring custom facilitators must preserve the property. |
+| 1.10 | EIP-3009 front-running griefing (anyone can submit a `transferWithAuthorization` once they hold the signature) | ⚠️ Operator responsibility | EIP-3009 exposes two settlement entry points: `transferWithAuthorization(from, to, value, …, sig)` is permissionless (any caller, any `msg.sender`), and `receiveWithAuthorization(from, to, value, …, sig)` requires `msg.sender == to`. kawasekit's facilitator calls **`transferWithAuthorization`** (`src/x402/facilitator.ts:556`) because the facilitator EOA pays gas but is **not** the JPYC recipient — the recipient is the merchant from `paymentRequirements.payTo`. The `receive` variant would force `msg.sender == to`, which collapses the facilitator role into the merchant. So the choice is structural: front-running griefing is the cost of separating gas-payer from value-recipient. A third party who captures the signature (e.g. via threat 1.3) can broadcast it with their own gas; funds still land at the merchant `to`, but the legitimate facilitator's submission fails with "nonce already used". Mitigation is operational: TLS + minimum-latency settle paths, plus accepting that this surface exists. |
+| 1.11 | ECDSA signature malleability (`s` vs `n−s`) | ✅ Mitigated | EIP-3009 uses ECDSA. ECDSA admits two signatures for the same message (`s` and `n−s`). Two layers prevent abuse: (a) viem's `signTypedData` produces canonical low-`s` signatures, and (b) JPYC v2's `fiat/ECRecover.sol:58` actively rejects high-`s` values (`if (uint256(s) > 0x7FFF…20A0) revert "ECRecover: invalid signature 's' value"`). Even if a malleable variant of a signature were constructed, the authorization's uniqueness is bound by the **nonce** — a re-submission with the same `from`+`nonce` reverts on `authorizationState`. No double-spend path. |
 
 ### Where the mitigations live
 
@@ -130,12 +182,13 @@ The facilitator owns:
 | # | Threat | Verdict | Notes |
 |---|---|---|---|
 | 2.1 | Theft of facilitator EOA key | ⚠️ Operator responsibility | Compromise drains the EOA's gas balance (POL). It does **not** drain user JPYC — the EOA never holds JPYC. Impact is denial of service against the paywall, not theft of payer funds. Mitigation lives in operator key custody (HSM / KMS / Vault — `recipes/` chapter, M4). |
-| 2.2 | Concurrent settle nonce race | ✅ Mitigated | Documented in `createSelfFacilitator` JSDoc and enforced by example: the facilitator account MUST be constructed with viem's `nonceManager` to serialise nonces under concurrency. Without it, parallel settles race and only one lands — a correctness failure caught in M3-3 testing and now an example invariant. |
+| 2.2 | Concurrent settle nonce race | ⚠️ Operator responsibility | Parallel `settle()` from the same facilitator EOA reads the same on-chain nonce N for each `writeContract`, so only one tx lands and the rest revert as nonce-collisions — a correctness failure (settlement silently dropped) surfaced in M3-3 testing. The fix is to attach viem's `nonceManager` to the facilitator's `Account` at construction time, which serialises the local nonce. **The SDK currently does NOT enforce this at runtime** — `createSelfFacilitator` does not introspect `walletClient.account` for a `nonceManager`, so a misconfigured caller still constructs successfully and silently drops settlements under fan-out. The mitigation today is JSDoc + example wiring (`createSelfFacilitator` JSDoc `@example`, `examples/agent-x402-jpyc/server/index.ts`). Per §0's definition (`✅ = code in the SDK prevents the attack`) this fails to meet the `✅` bar; the verdict is downgraded to `⚠️ Operator responsibility` until SDK-level enforcement lands. Tracked in §6.5. |
 | 2.3 | DoS via repeated invalid `/verify` calls | ⚠️ Operator responsibility | An attacker can feed crafted payloads that fail at simulation, costing the facilitator no gas but consuming RPC reads. kawasekit does no rate-limiting. **Recommendation**: rate-limit at the HTTP layer (the Hono adapter exposes `/verify` and `/settle` for the operator to wrap). |
 | 2.4 | MEV sandwich on settle | 🔵 Out of scope | `transferWithAuthorization` is a fixed-amount, fixed-recipient transfer with no slippage. There is no profitable sandwich. The only MEV available is censorship (reorder to delay), which the time window upper-bounds. |
 | 2.5 | Gas grief — pushing receiptTimeoutMs past completion | ⚠️ Operator responsibility | Default `receiptTimeoutMs = 60_000`. If the bundler / chain is congested, settle may return `unexpected_settle_error` even though the tx eventually lands. The operator should not double-broadcast on this error — the nonce will already be marked used. **Recommendation**: surface `txHash` in error path (already done in `failSettle`) and let the operator probe the chain rather than retry blindly. |
 | 2.6 | facilitator EOA signing data not in its intended scope | ✅ Mitigated | The facilitator only signs `transferWithAuthorization` calls on tokens specified by the verified payload. It does not expose a generic signing endpoint. There is no path from a malicious payload to a non-transfer call from this EOA. |
 | 2.7 | Misconfigured `network`/`chain.id` (mainnet broadcast on testnet config) | ✅ Mitigated | M4-1 required `network` argument fails fast at construction if the chain identity disagrees. Without this check (M3 behaviour), an operator could have silently broadcast against the wrong network. |
+| 2.8 | settle tx reorg (content delivered, payment reverted) | ⚠️ Operator responsibility | Polygon PoS produces blocks that can be reorganised within a small depth before finality. If `settle` mines, the facilitator returns success, the operator delivers paid content, and a subsequent reorg replaces the settle block, the authorization `nonce` returns to unused and the merchant has lost the JPYC for that hit. `createSelfFacilitator` waits for one block receipt via `waitForTransactionReceipt(receiptTimeoutMs)`, but **does not enforce a confirmation depth** — the operator chooses how many blocks to wait before considering settlement final. **Recommendation**: for mainnet, wait at least the bundler / paymaster's finality recommendation before releasing high-value content; for testnet, the default single-receipt wait is fine. Tracked in §6.6. |
 
 ### Where the mitigations live
 
@@ -232,7 +285,7 @@ that calls `JPYC.transfer()`. EIP-3009 is **not** used here because JPYC v2's
 | 4.2 | UserOp signature replay across accounts | ✅ Mitigated | EntryPoint v0.7 binds the UserOp hash to the account address plus the chain id. A signature for account A on chain X cannot replay against account A on chain Y nor against account B on chain X. |
 | 4.3 | Paymaster sponsorship exploited to drain JPYC | 🔵 Out of scope | The paymaster pays gas in chain-native currency; it does not touch JPYC. A compromised paymaster results in stuck UserOps (no sponsorship), not JPYC loss. |
 | 4.4 | Default signer assumption in mixed-plugin clients | ⚠️ Operator responsibility | If the operator constructs a `KernelAccountClient` with both sudo and regular plugins, the "default" signer is determined by the construction order. kawasekit's helpers (`buildKernelAccountClient`, `buildSessionKernelClient`) hide this — third-party constructors are responsible for matching signer to operation. Documented in SECURITY.md M2 bullet 1. |
-| 4.5 | Daily-limit accounting reset by reissuing session key | ✅ Mitigated | The on-chain policy state is bound to the validator instance, not the address. Issuing a new validator does not "reset" anything because each new validator is a distinct instance. Revoking and reissuing is the explicit operator-authorised path. |
+| 4.5 | Daily-limit accounting reset by reissuing session key | ✅ Mitigated | Reissuing a session key (installing a new validator instance under the smart account's `regular` slot) does start that validator's daily counter at zero — that part is mechanically true. The mitigation is that **only the owner (sudo authority) can install a new validator**; a compromised session key cannot reissue itself out from under the policy. Owner-driven reissue is by definition authorised — the owner is the trust root. So an attacker who controls a session key sees the daily-limit cap as a hard ceiling per validator instance and cannot circumvent it by triggering a reissue from below the trust root. |
 | 4.6 | Malicious paymaster targeting account-level metadata | 🔵 Out of scope | Paymasters see UserOp metadata (sender, target, calldata). For a JPYC `transfer`, this means: who paid whom, when, how much. This is **on-chain public** after inclusion; the paymaster sees it at most a few seconds early. kawasekit does not consider this a confidentiality breach because the data is public. Operators wanting confidential payments need a different primitive. |
 | 4.7 | EIP-3009 attempted from smart-account `from` | ✅ Mitigated | JPYC v2's `transferWithAuthorization` uses pure `ecrecover`. Any signature whose `from` is a smart account address recovers to a *different* EOA address (or fails), so `verify` rejects it with `invalid_exact_evm_payload_signature`. kawasekit's facilitator does not need a separate guard — the token contract is the source of truth. |
 
@@ -344,6 +397,18 @@ evaluated alongside the in-SDK implementation.
 - Treat duplicate payment as a known-quantity refund scenario in the
   business logic, not as a fatal incident.
 
+**Privacy consideration (M5 design).** The Round 2 external feedback proposed
+deriving the idempotency key from the agent's reasoning step
+(`hash(intent_text_normalized || step_idx || optional_context)`). Shipping
+such a key over HTTP gives the server a stable identifier per user intent —
+linkability across calls becomes available to the merchant / facilitator
+even when each individual call would otherwise be unlinkable. Idempotency
+and privacy are in tension here. The M5 design must explicitly decide
+whether the key is intent-derived (better idempotency, worse linkability)
+or opaque-random per call (worse idempotency, better privacy), or hybrid
+(intent-derived locally, opaque on the wire with a server-side lookup
+table). This is a recorded open question, not a settled answer.
+
 ### 6.2. Session-envelope encryption
 
 **Gap.** `KawasekitSessionEnvelope` is plain JSON. Whoever can read the JSON
@@ -382,6 +447,65 @@ contract.
 **Mitigation path.** Custom policy contract (M5+). The composition of
 existing policies covers the M3/M4 use cases.
 
+### 6.5. `nonceManager` enforcement is not at the SDK level
+
+**Gap.** `createSelfFacilitator` (`src/x402/facilitator.ts`) requires the
+bound `walletClient.account` to carry viem's `nonceManager` whenever the
+facilitator may settle multiple authorizations in parallel (threat 2.2),
+but the SDK does not introspect the account at construction time to
+verify this. JSDoc + `examples/agent-x402-jpyc/server/index.ts` show the
+correct wiring; nothing rejects the wrong wiring.
+
+**Consequence.** A misconfigured operator silently drops settlements
+under fan-out (LLM agents parallel-calling tool endpoints is the typical
+trigger). Direction is the opposite of double-spend — under-collection
+rather than over-collection. No funds are at risk on the user side; the
+merchant just loses billing events.
+
+**Mitigation path (post-M4 alpha).** Add a construction-time check that
+inspects `walletClient.account.nonceManager` and throws if absent, with
+an error message pointing at the JSDoc `@example`. Once the runtime
+check lands, threat 2.2 promotes from `⚠️ Operator responsibility` back
+to `✅ Mitigated`. Targeted at v0.1.0-alpha.N (small, low-risk patch).
+
+### 6.6. Reorg safety / confirmation depth is operator-set
+
+**Gap.** `createSelfFacilitator`'s `receiptTimeoutMs` controls how long to
+wait for a `waitForTransactionReceipt`, but the operator's policy on
+how many blocks past inclusion to require before declaring settlement
+final is outside the SDK. On Polygon PoS, a reorg within typical depth
+can revert a settle tx after the operator has already delivered paid
+content (threat 2.8).
+
+**Consequence.** Real-money loss to the merchant equal to the reverted
+settle's amount, bounded by per-call value × concurrent in-flight
+settles within the reorg window.
+
+**Mitigation path (M5).** Expose an explicit `confirmationDepth` (or
+`finalityBlocks`) option on `createSelfFacilitator` with a chain-aware
+default informed by Polygon's recommended values, plus docs/recipes
+guidance for tuning per-merchant SLO. The current single-receipt wait
+remains the testnet / low-value default.
+
+### 6.7. Adversarial base64 decoding tests
+
+**Gap.** `src/x402/encoding.test.ts` covers four adversarial header
+shapes (alphabet, URL-safe, non-JSON, non-object); the
+`encoding.conformance.test.ts` ensures byte-equivalence with the
+upstream `@x402/core` reference for valid inputs. Non-canonical base64
+inputs (overlong padding, embedded whitespace, alternate canonical
+forms) are not explicitly exercised.
+
+**Consequence.** Low — the JSON downstream rejects bytes that do not
+re-encode cleanly. The remaining concern is a theoretical case where a
+non-canonical encoding decodes to bytes that JSON would accept; an
+adversarial test set would close the proof-by-coverage gap.
+
+**Mitigation path (alpha.N or beta).** Extend
+`encoding.conformance.test.ts` with adversarial-decoding cases sourced
+from `@x402/core`'s reference test corpus (if available) or hand-crafted
+to cover RFC 4648 §3.5 "non-canonical" forms.
+
 ---
 
 ## 7. Reporting
@@ -399,6 +523,12 @@ and later, unless the reporter prefers anonymity.
 
 ## Appendix A — Revision history
 
+This document is revised every time an external review (formal or informal)
+surfaces a point. The table below records each revision; when a verdict
+changes (`✅ ↔ ⚠️ ↔ 🟡 ↔ 🔵`) the Change column explains the rationale, so a
+reader can audit the integrity of the threat model over time.
+
 | Date | Author | Change |
 |---|---|---|
 | 2026-05-27 | k0yote | Initial draft (M4-3.1 — M4-3.6). Pending external review. |
+| 2026-05-28 | k0yote (M4 self-review) | Pre-external-review hardening pass: added Layer 0 (Supply chain & build integrity); added threats 1.9 (verify→settle TOCTOU), 1.10 (`transferWithAuthorization` front-running griefing), 1.11 (ECDSA s-malleability), 2.8 (settle tx reorg); demoted 2.2 (concurrent nonce race) from ✅ to ⚠️ because mitigation is doc-only and §0 requires `✅ = SDK code prevents`; rewrote 1.1 with empirical `fiat/EIP712.sol` reference; refined 1.3, 1.7, 4.5 wording. Added §6.5 (nonceManager enforcement), §6.6 (reorg safety / confirmation depth), §6.7 (adversarial base64 decoding) and the §6.1 privacy consideration. |
