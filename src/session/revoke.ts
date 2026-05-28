@@ -12,9 +12,12 @@
  * In-flight UserOps already submitted to the bundler but not yet mined can
  * still settle before the uninstall transaction lands. A future "soft revoke"
  * via `invalidateNonce` on the session-key validator's nonce key will close
- * that race; tracked for M4 (the helper signature accepts an
+ * that race; tracked for M5 (the helper signature accepts an
  * `invalidateInFlightNonces` option today and throws `"not implemented"` to
- * lock in the API shape).
+ * lock in the API shape). Until M5 lands, see
+ * `docs/recipes/revoke-race-mitigation.md` for the four-layer operator
+ * playbook (SDK call → merchant kill-switch → paymaster sponsorship
+ * freeze → bundler mempool monitoring).
  *
  * @packageDocumentation
  */
@@ -67,8 +70,10 @@ export interface RevokeSessionKeyParams {
 	readonly policies: readonly Policy[];
 	/**
 	 * Future option: also invalidate the session-key validator's nonce key
-	 * to kill in-flight UserOps. Not implemented in M3 — passing `true`
-	 * throws.
+	 * to kill in-flight UserOps. Not implemented today — passing `true`
+	 * throws. Tracked for M5; see `docs/THREAT_MODEL.md` §6.3 and
+	 * `docs/recipes/revoke-race-mitigation.md` for the operator playbook to
+	 * use until then.
 	 */
 	readonly invalidateInFlightNonces?: boolean;
 	/** EntryPoint override. Defaults to v0.7. */
@@ -99,7 +104,10 @@ export interface RevokeSessionKeyResult {
  *
  * @throws {SessionEnvelopeSignerMismatchError} If `sessionKeySigner.address`
  *   does not match `envelope.sessionKeyAddress`.
- * @throws {Error} If `invalidateInFlightNonces` is `true` (M4).
+ * @throws {Error} If `invalidateInFlightNonces` is `true` (planned for M5;
+ *   see `docs/THREAT_MODEL.md` §6.3 and
+ *   `docs/recipes/revoke-race-mitigation.md` for the four-layer
+ *   operator playbook to use until then).
  *
  * @example
  * ```ts
@@ -142,7 +150,7 @@ export async function revokeSessionKey(
 
 	if (params.invalidateInFlightNonces === true) {
 		throw new Error(
-			"revokeSessionKey: `invalidateInFlightNonces` is not implemented yet — the helper signature accepts the option to lock in the API shape, but in-flight nonce invalidation lands in M4. Hard revoke via uninstallPlugin is what runs today.",
+			"revokeSessionKey: `invalidateInFlightNonces` is not implemented yet — the helper signature accepts the option to lock in the API shape, but in-flight nonce invalidation lands in M5. Hard revoke via uninstallPlugin is what runs today; see docs/recipes/revoke-race-mitigation.md for the four-layer operator playbook to use until then.",
 		);
 	}
 
