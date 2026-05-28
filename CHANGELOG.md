@@ -277,6 +277,32 @@ policies })` wires sudo (owner ECDSA) + regular (session-key permission
     EntryPoint pre-deployed). The corresponding tests are pure-unit;
     scripts/09 + scripts/10 cover the on-chain flow against Amoy.
 
+  **Verified live on Polygon mainnet (M4-1.8 + M4-1.9)**
+
+  The two on-chain deliverables required by M4's Definition of Done. Both
+  ran from a clean-room mainnet wallet provisioned with 1 JPYC per payer
+  address (payer EOA + smart account) and 1 POL for the facilitator EOA.
+
+  - **M4-1.8 / scripts/11 — self-facilitator settle**: an EOA payer signs
+    EIP-3009 off-chain; the facilitator EOA broadcasts
+    `transferWithAuthorization` and 0.001 JPYC moves end-to-end in 3.0 s.
+    Facilitator gas spend: 0.0308 POL.
+    Settlement tx: [0x6feacc719785c0fd8be0d8eeb1aff6b766abfb9c3acce6a79b00d4bdb2536502](https://polygonscan.com/tx/0x6feacc719785c0fd8be0d8eeb1aff6b766abfb9c3acce6a79b00d4bdb2536502).
+  - **M4-1.9 / scripts/12 — session-key full lifecycle**: owner issues a
+    fresh ephemeral session key with a daily-limit policy, the agent
+    transfers 0.001 JPYC from the smart account through the session-key
+    permission validator, the owner revokes the validator, and a final
+    post-revoke transfer attempt is asserted to revert at the AA
+    validation phase. ZeroDev paymaster sponsored all UserOps.
+    - Pre-revoke transfer (the deliverable tx): [0x44a914331fc8ba78e2ad5a13da73535e45b4d89aba318effd5cf8a2bd89e1c8c](https://polygonscan.com/tx/0x44a914331fc8ba78e2ad5a13da73535e45b4d89aba318effd5cf8a2bd89e1c8c).
+    - Revoke (uninstallValidation, owner sudo client): [0x8017f71190bc4e7cb78d2ce5356e2a54282a9bb0616142fcf505ac64be3e8945](https://polygonscan.com/tx/0x8017f71190bc4e7cb78d2ce5356e2a54282a9bb0616142fcf505ac64be3e8945).
+    - Post-revoke transfer attempt: reverted by Kernel's permission
+      validator before any on-chain settlement, as expected. No
+      broadcast tx.
+
+  The same scripts are reusable for future alpha / beta / GA verification
+  via `KAWASEKIT_X402_CHAIN=polygon KAWASEKIT_ALLOW_MAINNET=1`.
+
 All notable changes to kawasekit are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

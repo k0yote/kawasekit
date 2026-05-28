@@ -129,6 +129,7 @@
 		"m3:session-revoke": "tsx scripts/10-session-revoke.ts",
 		"m4:mainnet-self-settle": "tsx scripts/11-mainnet-self-settle.ts",
 		"m4:mainnet-session-flow": "tsx scripts/12-mainnet-session-flow.ts",
+		"m4:inspect-wallets": "tsx scripts/13-inspect-wallets.ts",
 		"cli": "tsx cli/index.ts"
 	},
 	"dependencies": {
