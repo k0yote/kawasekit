@@ -9,10 +9,17 @@
  */
 
 export {
+	getKnownAssetDomain,
+	type KnownAssetDomain,
+	type KnownAssetId,
+	listKnownAssetIds,
+} from "../tokens/known-assets";
+export {
 	type CreateX402PaymentSignerParams,
 	createX402PaymentSigner,
 	type SignX402PaymentParams,
 	X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS,
+	type X402AssetParam,
 	type X402PaymentSigner,
 	type X402TokenDomain,
 } from "./client";
@@ -27,7 +34,7 @@ export {
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./encoding";
-export { X402InvalidPayloadError } from "./errors";
+export { X402InvalidConfigError, X402InvalidPayloadError } from "./errors";
 export {
 	/** @deprecated Renamed to `CreateHttpFacilitatorParams`. Removed in v0.2.0. */
 	type CreateCoinbaseFacilitatorParams,

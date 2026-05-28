@@ -59,7 +59,11 @@ const budgetHuman = optionalEnv("AGENT_BUDGET_JPYC") ?? "0.01";
 const budget = parseUnits(budgetHuman, JPYC_DECIMALS);
 
 const payer = privateKeyToAccount(payerPk);
-const signer = createX402PaymentSigner({ network: "testnet", account: payer });
+const signer = createX402PaymentSigner({
+	network: "testnet",
+	account: payer,
+	asset: { kind: "known", id: "jpyc-v2" },
+});
 
 let spentWei = 0n;
 const settlements: Array<{ city: string; tx: string; amount: string }> = [];

@@ -152,7 +152,7 @@ pnpm m3:session-revoke           # transfer → revoke → asserted post-revoke 
 | server `createSelfFacilitator(...)` | `createSelfFacilitator` | local verify + settle; no Coinbase CDP / external facilitator |
 | server `buildPaymentRequirements(...)` | `buildPaymentRequirements` | well-formed v2 `PaymentRequirements` with the JPYC `extra` baked in |
 | agent `wrapFetch({ signer, onPayment })` | `wrapFetch` | any `fetch` becomes x402-aware; `onPayment` is the budget hook |
-| agent `createX402PaymentSigner({ account })` | `createX402PaymentSigner` | EOA-bound signer that produces EIP-3009 authorisations |
+| agent `createX402PaymentSigner({ network, account, asset })` | `createX402PaymentSigner` | EOA-bound signer that produces EIP-3009 authorisations; `asset` pins the EIP-712 domain (use `{ kind: "known", id: "jpyc-v2" }`) |
 | sidecar `issueSessionKey` / `restoreSessionAccount` | from `kawasekit/session` | owner-side issuance + agent-side restoration with chain / version / signer fail-fast |
 
 Each of these has a JSDoc `@example` in the source. Read them straight

@@ -24,8 +24,13 @@ import {
 	generateAuthorizationNonce,
 	signTransferWithAuthorization,
 } from "../tokens/eip3009";
-import { JPYC_EIP712_DOMAIN_HINT, JPYC_V2_ADDRESS } from "../tokens/jpyc";
-import { X402InvalidPayloadError } from "./errors";
+import {
+	getKnownAssetDomain,
+	type KnownAssetDomain,
+	type KnownAssetId,
+	listKnownAssetIds,
+} from "../tokens/known-assets";
+import { X402InvalidConfigError, X402InvalidPayloadError } from "./errors";
 import type {
 	X402ExactEvmPayload,
 	X402PaymentPayload,
@@ -57,6 +62,43 @@ export interface X402TokenDomain {
 	readonly version: string;
 }
 
+/**
+ * Asset binding for {@link createX402PaymentSigner}. Required, discriminated.
+ *
+ * **Default-on whitelist**: integrators MUST declare which asset they intend
+ * to sign for. The `known` branch references a kawasekit-maintained
+ * whitelist (see `src/tokens/known-assets.ts`); the `unsafeOverride` branch
+ * is the deliberate escape hatch for any other asset and is named loudly so
+ * it survives a code review. Either way, the signer pins the EIP-712 domain
+ * at construction time and refuses to sign if `paymentRequirements.asset`
+ * disagrees with the pinned `verifyingContract`.
+ *
+ * Closes Threat 1.4 (misadvertised EIP-712 domain): the server's advertised
+ * `extra.name` / `extra.version` and `asset` are all ignored for signing
+ * purposes — the signer trusts only what the integrator declared here.
+ */
+export type X402AssetParam =
+	| {
+			/** Use a kawasekit-maintained pinned EIP-712 domain. */
+			readonly kind: "known";
+			/** The asset id to pin. See {@link KnownAssetId} for the registry. */
+			readonly id: KnownAssetId;
+	  }
+	| {
+			/**
+			 * Use a caller-supplied EIP-712 domain for an asset NOT on the
+			 * kawasekit whitelist. The name is deliberately loud — pick this
+			 * branch only when you have separately audited the contract and its
+			 * `eip712Domain()` output.
+			 */
+			readonly kind: "unsafeOverride";
+			readonly domain: {
+				readonly name: string;
+				readonly version: string;
+				readonly verifyingContract: Address;
+			};
+	  };
+
 /** Parameters for {@link createX402PaymentSigner}. */
 export interface CreateX402PaymentSignerParams {
 	/**
@@ -74,18 +116,21 @@ export interface CreateX402PaymentSignerParams {
 	 */
 	readonly account: Account;
 	/**
+	 * Asset binding (required). Pins the EIP-712 domain at construction time
+	 * and cross-checks `paymentRequirements.asset` at every sign call.
+	 * See {@link X402AssetParam} for the discriminated-union shape.
+	 *
+	 * **Threat 1.4 mitigation**: the wire-format `extra.name` and
+	 * `extra.version` are NOT consulted; a malicious server cannot coerce a
+	 * mismatched signature through them.
+	 */
+	readonly asset: X402AssetParam;
+	/**
 	 * Default authorization lifetime in seconds. Bounded by each
 	 * requirement's `maxTimeoutSeconds` at sign time.
 	 * Defaults to {@link X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS}.
 	 */
 	readonly defaultLifetimeSeconds?: number;
-	/**
-	 * Optional override of the EIP-712 domain `name` / `version`. Skips the
-	 * lookup of `paymentRequirements.extra.name` / `.version`. Useful when
-	 * the caller wants to pin to a known-good domain regardless of what the
-	 * server advertised.
-	 */
-	readonly domainOverride?: X402TokenDomain;
 }
 
 /** Parameters for {@link X402PaymentSigner.sign}. */
@@ -145,23 +190,62 @@ function assertAddress(value: string, field: string): Address {
 	return value as Address;
 }
 
-function resolveDomain(
-	requirements: X402PaymentRequirements,
-	override: X402TokenDomain | undefined,
-): X402TokenDomain {
-	if (override) {
-		return override;
+/** Construction-time resolution of an {@link X402AssetParam} to a pinned domain. */
+interface ResolvedAsset {
+	readonly name: string;
+	readonly version: string;
+	readonly verifyingContract: Address;
+}
+
+function resolveAssetParam(asset: X402AssetParam): ResolvedAsset {
+	if (asset.kind === "known") {
+		const entry: KnownAssetDomain | undefined = getKnownAssetDomain(asset.id);
+		if (entry === undefined) {
+			throw new X402InvalidConfigError(
+				"asset.id",
+				`unknown asset id ${JSON.stringify(asset.id)}. Supported: ${listKnownAssetIds()
+					.map((id) => JSON.stringify(id))
+					.join(", ")}.`,
+			);
+		}
+		return {
+			name: entry.name,
+			version: entry.version,
+			verifyingContract: entry.verifyingContract,
+		};
 	}
-	const extra = requirements.extra as { name?: unknown; version?: unknown };
-	if (typeof extra.name === "string" && typeof extra.version === "string") {
-		return { name: extra.name, version: extra.version };
+	if (asset.kind === "unsafeOverride") {
+		const { domain } = asset;
+		if (typeof domain.name !== "string" || domain.name === "") {
+			throw new X402InvalidConfigError(
+				"asset.domain.name",
+				"`unsafeOverride.domain.name` must be a non-empty string",
+			);
+		}
+		if (typeof domain.version !== "string" || domain.version === "") {
+			throw new X402InvalidConfigError(
+				"asset.domain.version",
+				"`unsafeOverride.domain.version` must be a non-empty string",
+			);
+		}
+		if (!isAddress(domain.verifyingContract, { strict: false })) {
+			throw new X402InvalidConfigError(
+				"asset.domain.verifyingContract",
+				`\`unsafeOverride.domain.verifyingContract\` must be a valid address, got ${JSON.stringify(domain.verifyingContract)}`,
+			);
+		}
+		return {
+			name: domain.name,
+			version: domain.version,
+			verifyingContract: getAddress(domain.verifyingContract),
+		};
 	}
-	if (getAddress(requirements.asset) === getAddress(JPYC_V2_ADDRESS)) {
-		return JPYC_EIP712_DOMAIN_HINT;
-	}
-	throw new X402InvalidPayloadError(
-		"PaymentRequirements",
-		"`extra.name` and `extra.version` are required for exact-EVM signing on a non-JPYC asset",
+	// Defensive: TS exhaustiveness guarantees this is unreachable at compile
+	// time, but a JS consumer could smuggle through an unknown kind.
+	const exhaustive = asset as { kind: string };
+	throw new X402InvalidConfigError(
+		"asset.kind",
+		`unsupported kind ${JSON.stringify(exhaustive.kind)}. Expected "known" or "unsafeOverride".`,
 	);
 }
 
@@ -218,7 +302,11 @@ function validateRequirements(requirements: X402PaymentRequirements): {
  * import { createX402PaymentSigner } from "kawasekit";
  *
  * const account = privateKeyToAccount("0x...");
- * const signer = createX402PaymentSigner({ network: "testnet", account });
+ * const signer = createX402PaymentSigner({
+ *   network: "testnet",
+ *   account,
+ *   asset: { kind: "known", id: "jpyc-v2" },
+ * });
  *
  * // ...after receiving a 402 with PAYMENT-REQUIRED header...
  * const paymentPayload = await signer.sign({ paymentRequirements });
@@ -234,7 +322,7 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 			`\`defaultLifetimeSeconds\` must be positive, got ${defaultLifetimeSeconds}`,
 		);
 	}
-	const domainOverride = params.domainOverride;
+	const pinnedDomain = resolveAssetParam(params.asset);
 
 	return {
 		address: account.address,
@@ -254,7 +342,12 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 					`signer was configured for network="testnet" but requirements.network="${paymentRequirements.network}" (chainId ${chainId}) is a mainnet — refusing to sign payment for real funds`,
 				);
 			}
-			const domain = resolveDomain(paymentRequirements, domainOverride);
+			if (getAddress(asset) !== pinnedDomain.verifyingContract) {
+				throw new X402InvalidPayloadError(
+					"PaymentRequirements",
+					`requirements.asset (${getAddress(asset)}) does not match the signer's pinned verifyingContract (${pinnedDomain.verifyingContract}) — refusing to sign for an asset the signer was not configured to handle`,
+				);
+			}
 
 			const lifetime = Math.min(defaultLifetimeSeconds, paymentRequirements.maxTimeoutSeconds);
 			const validAfter = signParams.validAfter ?? 0n;
@@ -269,7 +362,12 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 			const nonce = generateAuthorizationNonce();
 			const signed = await signTransferWithAuthorization(
 				account,
-				{ name: domain.name, version: domain.version, chainId, verifyingContract: asset },
+				{
+					name: pinnedDomain.name,
+					version: pinnedDomain.version,
+					chainId,
+					verifyingContract: pinnedDomain.verifyingContract,
+				},
 				{
 					from: account.address,
 					to: payTo,

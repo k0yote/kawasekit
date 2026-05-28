@@ -217,7 +217,11 @@ async function main(): Promise<void> {
 	console.log("\nLocal paywall server:  ", baseUrl);
 
 	// Build the kawasekit client-side stack.
-	const signer = createX402PaymentSigner({ network: "testnet", account: payer });
+	const signer = createX402PaymentSigner({
+		network: "testnet",
+		account: payer,
+		asset: { kind: "known", id: "jpyc-v2" },
+	});
 	const fetch402 = wrapFetch({
 		signer,
 		onPayment: (req) => {

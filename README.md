@@ -167,7 +167,13 @@ Client (any `fetch` becomes x402-aware):
 import { createX402PaymentSigner, wrapFetch } from "kawasekit";
 import { privateKeyToAccount } from "viem/accounts";
 
-const signer = createX402PaymentSigner({ network: "testnet", account: privateKeyToAccount("0x...") });
+const signer = createX402PaymentSigner({
+  network: "testnet",
+  account: privateKeyToAccount("0x..."),
+  // Pin to the JPYC v2 EIP-712 domain at construction. The wire-format
+  // extra.name / extra.version are ignored — Threat 1.4 mitigation.
+  asset: { kind: "known", id: "jpyc-v2" },
+});
 
 // onPayment is *required* at the type level — kawasekit refuses to default
 // to "always pay" silently. The callback is your budget guard.
