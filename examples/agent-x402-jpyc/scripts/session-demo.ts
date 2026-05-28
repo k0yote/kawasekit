@@ -33,32 +33,21 @@ import {
 	restoreSessionAccount,
 	serializeSessionEnvelope,
 } from "kawasekit";
-import { createPublicClient, getAddress, type Hex, http, parseUnits } from "viem";
+import { createPublicClient, getAddress, http, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-
-function requireEnv(name: string): string {
-	const value = process.env[name];
-	if (value === undefined || value.trim() === "") {
-		throw new Error(`Missing required env var: ${name}. Copy .env.example to .env.`);
-	}
-	return value;
-}
+import { createPkProvider } from "../lib/pk-provider";
 
 function optionalEnv(name: string): string | undefined {
 	const value = process.env[name];
 	return value === undefined || value.trim() === "" ? undefined : value;
 }
 
-function requirePrivateKey(name: string): Hex {
-	const value = requireEnv(name);
-	if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
-		throw new Error(`${name} must be a 0x-prefixed 32-byte hex string.`);
-	}
-	return value as Hex;
-}
-
-const ownerPk = requirePrivateKey("OWNER_PRIVATE_KEY");
-const agentPk = requirePrivateKey("AGENT_PAYER_PRIVATE_KEY");
+const ownerPkProvider = createPkProvider(optionalEnv("OWNER_PK_URI") ?? "env://OWNER_PRIVATE_KEY");
+const agentPkProvider = createPkProvider(
+	optionalEnv("AGENT_PAYER_PK_URI") ?? "env://AGENT_PAYER_PRIVATE_KEY",
+);
+const ownerPk = await ownerPkProvider.getPk();
+const agentPk = await agentPkProvider.getPk();
 const rpcUrl = optionalEnv("POLYGON_AMOY_RPC_URL") ?? polygonAmoy.rpcUrls.default.http[0];
 if (rpcUrl === undefined) {
 	throw new Error("polygonAmoy.rpcUrls.default.http[0] is undefined; set POLYGON_AMOY_RPC_URL.");

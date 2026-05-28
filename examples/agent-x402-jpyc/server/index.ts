@@ -29,11 +29,11 @@ import {
 	createPublicClient,
 	createWalletClient,
 	getAddress,
-	type Hex,
 	http,
 	parseUnits,
 } from "viem";
 import { nonceManager, privateKeyToAccount } from "viem/accounts";
+import { createPkProvider } from "../lib/pk-provider";
 
 function requireEnv(name: string): string {
 	const value = process.env[name];
@@ -48,15 +48,10 @@ function optionalEnv(name: string): string | undefined {
 	return value === undefined || value.trim() === "" ? undefined : value;
 }
 
-function requirePrivateKey(name: string): Hex {
-	const value = requireEnv(name);
-	if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
-		throw new Error(`${name} must be a 0x-prefixed 32-byte hex string.`);
-	}
-	return value as Hex;
-}
-
-const facilitatorPk = requirePrivateKey("X402_FACILITATOR_PRIVATE_KEY");
+const facilitatorPkProvider = createPkProvider(
+	optionalEnv("X402_FACILITATOR_PK_URI") ?? "env://X402_FACILITATOR_PRIVATE_KEY",
+);
+const facilitatorPk = await facilitatorPkProvider.getPk();
 const recipient: Address = getAddress(requireEnv("X402_RECIPIENT"));
 const priceHuman = optionalEnv("PRICE_JPYC") ?? "0.001";
 const port = Number.parseInt(optionalEnv("PORT") ?? "8787", 10);

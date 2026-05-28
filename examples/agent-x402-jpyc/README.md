@@ -158,6 +158,37 @@ pnpm m3:session-revoke           # transfer → revoke → asserted post-revoke 
 Each of these has a JSDoc `@example` in the source. Read them straight
 from your editor's hover popup.
 
+## Switching to production: replace `env://` with `kms://`
+
+This example loads private keys through a thin `createPkProvider(uri)`
+abstraction (see [`lib/pk-provider.ts`](./lib/pk-provider.ts)). By default
+the URIs resolve to `env://VARNAME`, which:
+
+- reads the key from `process.env[VARNAME]`,
+- emits a loud `console.warn` on construction so you cannot miss the
+  posture in CI logs, and
+- is tagged `kind: "demo"` so downstream code can refuse to run with a
+  demo provider when `NODE_ENV === "production"`.
+
+To switch to a production posture, point the URI at `kms://<resource>`:
+
+```bash
+# Demo (default — what you get by copying .env.example):
+AGENT_PAYER_PK_URI=env://AGENT_PAYER_PRIVATE_KEY
+X402_FACILITATOR_PK_URI=env://X402_FACILITATOR_PRIVATE_KEY
+
+# Production posture (after you wire your KMS SDK into pk-provider.ts):
+AGENT_PAYER_PK_URI=kms://arn:aws:kms:ap-northeast-1:111111111111:key/abcd...
+X402_FACILITATOR_PK_URI=kms://projects/your-gcp/locations/global/keyRings/.../cryptoKeys/...
+```
+
+The `kms://` branch in `pk-provider.ts` is intentionally a `throw` today
+— kawasekit does **not** bundle a KMS adapter, because key custody is
+operator territory (`docs/THREAT_MODEL.md` Threat 2.1 / 5.6). When you
+replace the `throw` with your KMS SDK calls (`@aws-sdk/client-kms`,
+`@google-cloud/kms`, `node-vault`, etc.), the rest of the example does
+not need to change — only the provider implementation does.
+
 ## Troubleshooting
 
 **`Smart account has 0 JPYC`** — the agent payer EOA has no Amoy JPYC.

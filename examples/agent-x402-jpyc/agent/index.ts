@@ -27,9 +27,10 @@ import {
 	wrapFetch,
 	X402_HEADER_PAYMENT_RESPONSE,
 } from "kawasekit";
-import { formatUnits, type Hex, parseUnits } from "viem";
+import { formatUnits, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { z } from "zod";
+import { createPkProvider } from "../lib/pk-provider";
 
 function requireEnv(name: string): string {
 	const value = process.env[name];
@@ -44,15 +45,10 @@ function optionalEnv(name: string): string | undefined {
 	return value === undefined || value.trim() === "" ? undefined : value;
 }
 
-function requirePrivateKey(name: string): Hex {
-	const value = requireEnv(name);
-	if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
-		throw new Error(`${name} must be a 0x-prefixed 32-byte hex string.`);
-	}
-	return value as Hex;
-}
-
-const payerPk = requirePrivateKey("AGENT_PAYER_PRIVATE_KEY");
+const payerPkProvider = createPkProvider(
+	optionalEnv("AGENT_PAYER_PK_URI") ?? "env://AGENT_PAYER_PRIVATE_KEY",
+);
+const payerPk = await payerPkProvider.getPk();
 requireEnv("ANTHROPIC_API_KEY"); // surface missing key before we call Anthropic
 const serverUrl = (optionalEnv("AGENT_SERVER_URL") ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const userPrompt =
