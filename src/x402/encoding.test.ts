@@ -1,5 +1,8 @@
+import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
+	BASE64_REGEX,
+	base64ToUtf8,
 	decodePaymentRequiredHeader,
 	decodePaymentResponseHeader,
 	decodePaymentSignatureHeader,
@@ -273,5 +276,36 @@ describe("RFC 4648 canonical base64 enforcement (threat 1.7 / §6.7)", () => {
 				expect((error as X402InvalidPayloadError).reason).not.toMatch(/base64/);
 			}
 		}
+	});
+});
+
+// L5 closure: complement the adversarial corpus above with a property-based
+// test that exhausts the positive direction — every input the BASE64_REGEX
+// accepts must also decode via base64ToUtf8 without throwing. The adversarial
+// corpus proves the regex rejects the bad inputs; this property proves the
+// regex does not OVER-accept inputs the decoder cannot handle. Without it the
+// two layers could disagree silently in either direction.
+describe("BASE64_REGEX / base64ToUtf8 agreement (Threat 1.7 / §6.7 — property-based)", () => {
+	// fast-check `base64String` is documented to emit canonical RFC 4648 §4
+	// base64 (alphabet [A-Za-z0-9+/] + canonical = padding). 1000 runs.
+	it("any string the regex accepts is decoded by base64ToUtf8 without throwing", () => {
+		fc.assert(
+			fc.property(fc.base64String({ minLength: 0, maxLength: 512 }), (candidate) => {
+				if (!BASE64_REGEX.test(candidate)) {
+					// fast-check is not contractually obliged to satisfy our regex,
+					// so we skip cases the regex rejects rather than fail the
+					// property — the regex's no-over-accept guarantee is what we
+					// are establishing.
+					return true;
+				}
+				// The decoder MUST NOT throw. The decoded bytes may not be valid
+				// UTF-8 in pathological cases (TextDecoder default replaces
+				// malformed sequences with U+FFFD), so we only assert "no
+				// throw" — that is the regex/decoder agreement property.
+				expect(() => base64ToUtf8(candidate)).not.toThrow();
+				return true;
+			}),
+			{ numRuns: 1000 },
+		);
 	});
 });

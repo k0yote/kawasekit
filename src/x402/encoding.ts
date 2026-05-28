@@ -77,7 +77,14 @@ export const X402_HEADER_PAYMENT_RESPONSE = "PAYMENT-RESPONSE" as const;
 // See `docs/THREAT_MODEL.md` §6.7 for the M4 review trail and
 // `src/x402/encoding.test.ts` "RFC 4648 canonical enforcement" for the
 // adversarial corpus.
-const BASE64_REGEX =
+/**
+ * Strict RFC 4648 §4 canonical base64 matcher. Exported for the
+ * property-based test in `encoding.test.ts` (Threat 1.7 / §6.7
+ * regex-vs-decoder agreement); not intended as part of the public API.
+ *
+ * @internal
+ */
+export const BASE64_REGEX =
 	/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})?$/;
 
 function bigIntReplacer(_key: string, value: unknown): unknown {
@@ -102,7 +109,13 @@ function utf8ToBase64(input: string): string {
 	return Buffer.from(input, "utf8").toString("base64");
 }
 
-function base64ToUtf8(input: string): string {
+/**
+ * Internal helper exported for the regex-vs-decoder property-based test.
+ * Not part of the public API.
+ *
+ * @internal
+ */
+export function base64ToUtf8(input: string): string {
 	if (typeof globalThis.atob === "function") {
 		const binary = globalThis.atob(input);
 		const bytes = new Uint8Array(binary.length);
