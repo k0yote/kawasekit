@@ -210,3 +210,68 @@ describe("encoded golden length", () => {
 		expect(encoded.length).toBe(expectedLength);
 	});
 });
+
+describe("RFC 4648 canonical base64 enforcement (threat 1.7 / §6.7)", () => {
+	// Canonical base64 per RFC 4648 §4: encoded length must be a multiple of
+	// 4, and the only legal trailing forms are `XX==`, `XXX=`, or `XXXX` (no
+	// padding). Non-canonical forms — overlong padding, misplaced padding,
+	// short tails, embedded whitespace — are an adversarial decoding surface:
+	// cross-runtime decoders treat them inconsistently (Node's Buffer is
+	// permissive, browser `atob` is strict). The codec MUST reject them
+	// upfront, before the value reaches `JSON.parse`.
+	const baseline = encodePaymentSignatureHeader(PAYLOAD);
+
+	const adversarialCases: ReadonlyArray<{ readonly name: string; readonly input: string }> = [
+		// Padding manipulations.
+		{ name: "overlong padding (three `=` trailing)", input: `${baseline.replace(/=*$/, "")}===` },
+		{ name: "overlong padding (four `=` trailing)", input: `${baseline.replace(/=*$/, "")}====` },
+		{ name: "padding stripped (length not mod 4)", input: baseline.replace(/=+$/, "") },
+		{ name: "single `=` in the middle (misplaced padding)", input: `AB=CD` },
+		// Whitespace / line-folding (some legacy MIME decoders tolerate these).
+		{ name: "embedded newline (MIME-style fold)", input: `AAAA\nAAAA` },
+		{ name: "embedded carriage return", input: `AAAA\rAAAA` },
+		{ name: "embedded space", input: `AAAA AAAA` },
+		{ name: "embedded tab", input: `AAAA\tAAAA` },
+		// Lengths that cannot be canonical base64.
+		{ name: "length 1 (impossible)", input: `A` },
+		{ name: "length 5 (impossible)", input: `AAAAA` },
+		{ name: "length 6 with no padding (impossible)", input: `AAAAAA` },
+		// Single padding char alone.
+		{ name: "single `=` alone", input: `=` },
+		{ name: "double `==` alone", input: `==` },
+	];
+
+	for (const { name, input } of adversarialCases) {
+		it(`rejects ${name}`, () => {
+			expect(() => decodePaymentSignatureHeader(input)).toThrow(X402InvalidPayloadError);
+		});
+	}
+
+	// Negative control: empty string trips the JSON.parse step, not the
+	// regex (the regex accepts `""` as "zero groups" — empty bytes is
+	// technically canonical base64). We document the resulting error to pin
+	// the contract.
+	it("rejects empty string via the JSON layer (regex permits zero-length)", () => {
+		try {
+			decodePaymentSignatureHeader("");
+			throw new Error("should not reach");
+		} catch (error) {
+			expect(error).toBeInstanceOf(X402InvalidPayloadError);
+			expect((error as X402InvalidPayloadError).reason).toMatch(/JSON/);
+		}
+	});
+
+	// Positive control: every canonical tail form (XX==, XXX=, XXXX) is
+	// accepted at the regex layer. The downstream failure mode for these
+	// hand-crafted inputs is "not valid JSON", NOT "not valid base64",
+	// proving the canonical regex does not over-reject.
+	it("accepts every canonical tail form (XX==, XXX=, XXXX)", () => {
+		for (const sample of ["AA==", "AAA=", "AAAA", "AAAAAA==", "AAAAAAA=", "AAAAAAAA"]) {
+			try {
+				decodePaymentSignatureHeader(sample);
+			} catch (error) {
+				expect((error as X402InvalidPayloadError).reason).not.toMatch(/base64/);
+			}
+		}
+	});
+});

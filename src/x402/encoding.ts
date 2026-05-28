@@ -66,7 +66,19 @@ export const X402_HEADER_PAYMENT_RESPONSE = "PAYMENT-RESPONSE" as const;
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-const BASE64_REGEX = /^[A-Za-z0-9+/]*={0,2}$/;
+// Canonical base64 per RFC 4648 §4: encoded length is a multiple of 4 and the
+// only legal trailing forms are `XX==`, `XXX=`, or `XXXX` (no padding). The
+// outer prefix is zero or more 4-char groups; the optional inner alternation
+// matches a single final group of 4 chars or a properly padded 2-or-3 char
+// group. This shape rejects the non-canonical forms an adversary could try
+// to smuggle past the decoder — overlong padding (`X===`), misplaced padding
+// (`X=XX`), short tails (`XXX` with no `=`), or non-mod-4 lengths.
+//
+// See `docs/THREAT_MODEL.md` §6.7 for the M4 review trail and
+// `src/x402/encoding.test.ts` "RFC 4648 canonical enforcement" for the
+// adversarial corpus.
+const BASE64_REGEX =
+	/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})?$/;
 
 function bigIntReplacer(_key: string, value: unknown): unknown {
 	return typeof value === "bigint" ? value.toString() : value;

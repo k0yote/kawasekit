@@ -134,7 +134,7 @@ the workspace's dependencies, the build pipeline that produces the
 | 1.4 | Misadvertised EIP-712 domain by a malicious server | ⚠️ Operator responsibility | A server can advertise `extra.name="Evil"` to coerce a signature that recovers against a different domain. kawasekit's `createX402PaymentSigner` accepts a `domainOverride` so a client that knows the right token can pin it. JPYC v2 falls through to the well-known hint automatically. **Recommendation**: callers signing for non-JPYC assets should pass `domainOverride` against a hard-coded whitelist. |
 | 1.5 | Time-window manipulation (replay outside `validAfter`/`validBefore`) | ✅ Mitigated | `verify` checks `now ∈ [validAfter, validBefore)` and returns distinct error codes. The default lifetime (`X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS = 300`) bounds the bearer-window. |
 | 1.6 | Network / chainId mismatch silently accepted | ✅ Mitigated | M4-1 added a required `network: "mainnet" \| "testnet"` argument to both `createSelfFacilitator` and `createX402PaymentSigner`, and a runtime check throws if it disagrees with the chain identity. This catches the "testnet PK accidentally hitting mainnet RPC" failure mode at construction or sign time, before any broadcast. |
-| 1.7 | Header smuggling / base64 malleability | ✅ (canonical) / 🟡 (non-canonical) | The encoding layer (`src/x402/encoding.ts`) is byte-equivalence tested against the upstream `@x402/core` reference (`encoding.conformance.test.ts`). Adversarial decoding cases are covered in `src/x402/encoding.test.ts:167-185` (rejects non-base64 alphabet, URL-safe `-_`, valid base64 of non-JSON, and valid JSON of non-object). Non-canonical inputs that re-encode differently than canonical form (e.g. overlong padding) are **not** explicitly exercised; the practical blast radius is limited because the downstream JSON parser rejects bytes that do not round-trip cleanly, but a targeted adversarial-decoding test should land in v0.1.0-alpha.N. Tracked under §6.7. |
+| 1.7 | Header smuggling / base64 malleability | ✅ Mitigated | The encoding layer (`src/x402/encoding.ts`) is byte-equivalence tested against the upstream `@x402/core` reference (`encoding.conformance.test.ts`). The decoder enforces **RFC 4648 §4 canonical base64** at the regex layer: encoded length must be a multiple of 4 and only the legal trailing forms `XX==` / `XXX=` / `XXXX` are accepted. Non-canonical inputs (overlong padding, misplaced padding, short tails, embedded whitespace / newlines / tabs, non-mod-4 lengths) are rejected upfront — `src/x402/encoding.test.ts` "RFC 4648 canonical enforcement (threat 1.7 / §6.7)" exercises 13 adversarial cases plus a positive control that proves the regex does not over-reject. This closes the cross-runtime ambiguity that would otherwise let a permissive Node `Buffer` decoder accept inputs a strict browser `atob` rejects (or vice versa). |
 | 1.8 | Reasoning-step duplicate payment (same agent intent, multiple calls) | 🟡 Known limitation | See §6.1. The x402 wire format guarantees only **call-level** idempotency via the EIP-3009 nonce. A reasoning-step layer is missing. |
 | 1.9 | verify→settle TOCTOU (payer moves funds between verify and settle) | ⚠️ Operator responsibility | After `verify` passes the balance + nonce-not-used checks, the payer can move JPYC out of their EOA before `settle` lands; the on-chain `transferWithAuthorization` then reverts with insufficient balance. The facilitator already pays gas. This is griefing / DoS, not theft. **Recommendation**: never treat a `verify` success as "payment confirmed" — wait for the `settle` receipt (`waitForTransactionReceipt`) before delivering paid content. kawasekit's `createSelfFacilitator` does this by default. Operators wiring custom facilitators must preserve the property. |
 | 1.10 | EIP-3009 front-running griefing (anyone can submit a `transferWithAuthorization` once they hold the signature) | ⚠️ Operator responsibility | EIP-3009 exposes two settlement entry points: `transferWithAuthorization(from, to, value, …, sig)` is permissionless (any caller, any `msg.sender`), and `receiveWithAuthorization(from, to, value, …, sig)` requires `msg.sender == to`. kawasekit's facilitator calls **`transferWithAuthorization`** (`src/x402/facilitator.ts:556`) because the facilitator EOA pays gas but is **not** the JPYC recipient — the recipient is the merchant from `paymentRequirements.payTo`. The `receive` variant would force `msg.sender == to`, which collapses the facilitator role into the merchant. So the choice is structural: front-running griefing is the cost of separating gas-payer from value-recipient. A third party who captures the signature (e.g. via threat 1.3) can broadcast it with their own gas; funds still land at the merchant `to`, but the legitimate facilitator's submission fails with "nonce already used". Mitigation is operational: TLS + minimum-latency settle paths, plus accepting that this surface exists. |
@@ -485,24 +485,32 @@ default informed by Polygon's recommended values, plus docs/recipes
 guidance for tuning per-merchant SLO. The current single-receipt wait
 remains the testnet / low-value default.
 
-### 6.7. Adversarial base64 decoding tests
+### 6.7. Adversarial base64 decoding tests — **closed**
 
-**Gap.** `src/x402/encoding.test.ts` covers four adversarial header
-shapes (alphabet, URL-safe, non-JSON, non-object); the
-`encoding.conformance.test.ts` ensures byte-equivalence with the
-upstream `@x402/core` reference for valid inputs. Non-canonical base64
-inputs (overlong padding, embedded whitespace, alternate canonical
-forms) are not explicitly exercised.
+**Status.** Closed in `v0.1.0-alpha.N` post-M4. The `BASE64_REGEX` in
+`src/x402/encoding.ts` was tightened from `^[A-Za-z0-9+/]*={0,2}$` to the
+RFC 4648 §4 canonical form
+`^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})?$`,
+which enforces length-mod-4 and the legal trailing forms `XX==` / `XXX=` /
+`XXXX`. `src/x402/encoding.test.ts` gained a 13-case adversarial corpus
+plus 2 positive controls under "RFC 4648 canonical enforcement (threat
+1.7 / §6.7)". Threat 1.7 has been promoted from the split verdict
+`✅ canonical / 🟡 non-canonical` to a unified `✅ Mitigated`.
 
-**Consequence.** Low — the JSON downstream rejects bytes that do not
-re-encode cleanly. The remaining concern is a theoretical case where a
-non-canonical encoding decodes to bytes that JSON would accept; an
-adversarial test set would close the proof-by-coverage gap.
+**Historical record (pre-fix gap).** The original regex
+`^[A-Za-z0-9+/]*={0,2}$` permitted non-canonical inputs that the JSON
+parse step happened to reject in practice (lucky correctness), but the
+behaviour was sensitive to the underlying `atob` vs `Buffer.from(.., "base64")`
+implementation — Node's `Buffer` is permissive about padding while
+browser `atob` is strict, so the same input could decode in one
+runtime and not the other. The fix moves the canonical-form check
+upfront so all runtimes agree before any JSON layer runs.
 
-**Mitigation path (alpha.N or beta).** Extend
-`encoding.conformance.test.ts` with adversarial-decoding cases sourced
-from `@x402/core`'s reference test corpus (if available) or hand-crafted
-to cover RFC 4648 §3.5 "non-canonical" forms.
+**Adversarial cases covered.** Overlong padding (`X===`, `X====`),
+padding stripped (length not mod 4), misplaced padding (`AB=CD`),
+embedded `\n` / `\r` / space / tab (MIME-style folds), impossible
+lengths (1, 5, 6), padding-only inputs (`=`, `==`). The positive control
+asserts that every canonical tail form is still accepted.
 
 ---
 
@@ -531,3 +539,4 @@ reader can audit the integrity of the threat model over time.
 | 2026-05-27 | k0yote | Initial draft (M4-3.1 — M4-3.6). Pending external review. |
 | 2026-05-28 | k0yote (M4 self-review) | Pre-external-review hardening pass: added Layer 0 (Supply chain & build integrity); added threats 1.9 (verify→settle TOCTOU), 1.10 (`transferWithAuthorization` front-running griefing), 1.11 (ECDSA s-malleability), 2.8 (settle tx reorg); demoted 2.2 (concurrent nonce race) from ✅ to ⚠️ because mitigation is doc-only and §0 requires `✅ = SDK code prevents`; rewrote 1.1 with empirical `fiat/EIP712.sol` reference; refined 1.3, 1.7, 4.5 wording. Added §6.5 (nonceManager enforcement), §6.6 (reorg safety / confirmation depth), §6.7 (adversarial base64 decoding) and the §6.1 privacy consideration. |
 | 2026-05-28 | k0yote | Implemented §6.5: `createSelfFacilitator` now performs a construction-time check on `walletClient.account.nonceManager` and throws with an actionable error if absent. Threat 2.2 promoted from `⚠️ Operator responsibility` back to `✅ Mitigated`. §6.5 marked **closed**. Callsites updated: `scripts/07-x402-self-settle.ts` and `src/x402/facilitator.self.test.ts` (test scaffold) now attach `nonceManager`. New unit tests cover the throw path and the happy path. |
+| 2026-05-28 | k0yote | Implemented §6.7: `src/x402/encoding.ts` `BASE64_REGEX` tightened to RFC 4648 §4 canonical form. Threat 1.7 promoted from split `✅ canonical / 🟡 non-canonical` to unified `✅ Mitigated`. §6.7 marked **closed**. `src/x402/encoding.test.ts` gained a 13-case adversarial corpus under "RFC 4648 canonical enforcement (threat 1.7 / §6.7)" plus a positive control proving the regex does not over-reject. |
