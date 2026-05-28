@@ -32,10 +32,11 @@ Out of scope:
 - Bundler / paymaster operator code (operated by third parties or the user)
 - The smart-contract repository `kawasekit-contracts` (separate threat model)
 
-The threat model covers six layers, from §0.5 Layer 0
-(Supply chain & build integrity) through §5 Layer 5 (Agent runtime).
+The threat model covers six layers, from §0.5 (Supply chain & build
+integrity, Layer 0) through §5 (Agent runtime, Layer 5).
 §6 records known limitations the SDK does not close in this release;
-§7 covers vulnerability reporting.
+§7 covers vulnerability reporting; §8 is an informative survey of
+regulatory affordances the SDK does (and does not) provide.
 
 Each layer below uses a fixed structure:
 
@@ -66,9 +67,23 @@ threat 2.2 (concurrent settle nonce race) from `✅` to `⚠️` because the
 mitigation was JSDoc-only, not SDK-enforced — the same rigor must apply
 to threats whose `✅` rests on out-of-scope component behaviour.
 
+### Methodology
+
+kawasekit's threat enumeration applies **STRIDE** (Spoofing, Tampering,
+Repudiation, Information disclosure, Denial of service, Elevation of
+privilege) and **supply-chain risk** as informal checklists per layer.
+There is no formal completeness proof: PASTA, LINDDUN, attack-tree
+exhaustion, and similar exhaustive methodologies are out of scope for
+this document. The verdict vocabulary and the per-layer surface →
+trust-assumption → threat → mitigation skeleton are the only structural
+guarantees. Completeness is deferred to the external review prior to
+the `v0.1.0` GA publish and to any subsequent third-party security
+audit. Reviewers spotting an unenumerated threat should open an issue or
+submit a PR per [`SECURITY.md`](../SECURITY.md).
+
 ---
 
-## 0.5. Layer 0 — Supply chain & build integrity
+## 0.5. Supply chain & build integrity (Layer 0)
 
 ### Surface
 
@@ -160,7 +175,9 @@ the workspace's dependencies, the build pipeline that produces the
 | 1.8 | Reasoning-step duplicate payment (same agent intent, multiple calls) | 🟡 Known limitation — default-on guard required at API surface | See §6.1. The x402 wire format guarantees only **call-level** idempotency via the EIP-3009 nonce. A reasoning-step layer is missing. **SDK-level mitigation (v0.1.0-alpha.2+):** `wrapFetch`'s `onPayment` callback is **required at the type level** (`src/x402/fetch.ts:76`) — omitting it is a compile-time error, not a runtime "default to true". This forces every integrator to write a budget gate per construction site instead of silently inheriting "always pay". The remaining gap (same `fetch402` instance invoked twice for the same reasoning intent) cannot be closed in the wire format and is enumerated in §6.1. |
 | 1.9 | verify→settle TOCTOU (payer moves funds between verify and settle) | ⚠️ Operator responsibility | After `verify` passes the balance + nonce-not-used checks, the payer can move JPYC out of their EOA before `settle` lands; the on-chain `transferWithAuthorization` then reverts with insufficient balance. The facilitator already pays gas. This is griefing / DoS, not theft. **Recommendation**: never treat a `verify` success as "payment confirmed" — wait for the `settle` receipt (`waitForTransactionReceipt`) before delivering paid content. kawasekit's `createSelfFacilitator` does this by default. Operators wiring custom facilitators must preserve the property. |
 | 1.10 | EIP-3009 front-running griefing (anyone can submit a `transferWithAuthorization` once they hold the signature) | ⚠️ Operator responsibility | EIP-3009 exposes two settlement entry points: `transferWithAuthorization(from, to, value, …, sig)` is permissionless (any caller, any `msg.sender`), and `receiveWithAuthorization(from, to, value, …, sig)` requires `msg.sender == to`. kawasekit's facilitator calls **`transferWithAuthorization`** (`src/x402/facilitator.ts:556`) because the facilitator EOA pays gas but is **not** the JPYC recipient — the recipient is the merchant from `paymentRequirements.payTo`. The `receive` variant would force `msg.sender == to`, which collapses the facilitator role into the merchant. So the choice is structural: front-running griefing is the cost of separating gas-payer from value-recipient. A third party who captures the signature (e.g. via threat 1.3) can broadcast it with their own gas; funds still land at the merchant `to`, but the legitimate facilitator's submission fails with "nonce already used". Mitigation is operational: TLS + minimum-latency settle paths, plus accepting that this surface exists. |
-| 1.11 | ECDSA signature malleability (`s` vs `n−s`) | ✅ Mitigated | EIP-3009 uses ECDSA. ECDSA admits two signatures for the same message (`s` and `n−s`). Two layers prevent abuse: (a) viem's `signTypedData` produces canonical low-`s` signatures, and (b) JPYC v2's `fiat/ECRecover.sol:58` actively rejects high-`s` values (`if (uint256(s) > 0x7FFF…20A0) revert "ECRecover: invalid signature 's' value"`). Even if a malleable variant of a signature were constructed, the authorization's uniqueness is bound by the **nonce** — a re-submission with the same `from`+`nonce` reverts on `authorizationState`. No double-spend path. |
+| 1.11 | ECDSA signature malleability (`s` vs `n−s`) | ✅ Mitigated | EIP-3009 uses ECDSA. ECDSA admits two signatures for the same message (`s` and `n−s`). Two layers prevent abuse: (a) viem's `signTypedData` produces canonical low-`s` signatures, and (b) JPYC v2's `fiat/ECRecover.sol:58` actively rejects high-`s` values (`if (uint256(s) > 0x7FFF…20A0) revert "ECRecover: invalid signature 's' value"`). Even if a malleable variant of a signature were constructed, the authorization's uniqueness is bound by the **nonce** — a re-submission with the same `from`+`nonce` reverts on `authorizationState`. No double-spend path. The canonical low-`s` form is standardised in [EIP-2](https://eips.ethereum.org/EIPS/eip-2); viem's enforcement is EIP-2-compliant, and JPYC v2's guard uses the same `n/2` threshold (`0x7FFF…20A0` ≈ secp256k1 `n/2`) — i.e. both layers reference the same canonical bound, removing any ambiguity about which half of the signature space is rejected. |
+| 1.12 | Client clock skew breaks `validAfter` / `validBefore` | ⚠️ Operator responsibility | `validAfter` / `validBefore` are absolute Unix-seconds computed from the signer's system clock at sign time (`src/tokens/eip3009.ts:authorizationDeadlineFromNow`). A signer whose clock is wrong (NTP attack, VM suspend/resume that did not re-sync, clock-drift inside a sandbox) can produce authorizations that are either (a) never valid (`validBefore` already in the past at the facilitator's clock) or (b) bearer-valid for far longer than intended (`validBefore` far in the future). The facilitator already rejects (a) with `payment_expired` / `payment_not_yet_valid` at `verify` time, so the failure mode is loud — but (b) silently extends the bearer window and the SDK does not detect it. **Recommendation**: run the signer process with a monotonic, NTP-disciplined clock. Container operators should mount the host's clock and treat clock drift as a deployment-health alarm, not a UX inconvenience. |
+| 1.13 | JSON payload DoS at `/verify` and `/settle` | ⚠️ Operator responsibility | The Hono adapter exposes `/verify` and `/settle` (`src/x402/server.ts`); both parse a JSON body. kawasekit ships no body-size limit and no parse-timeout. A malicious client can post a multi-MB JSON object to exhaust memory or CPU on the facilitator. **Recommendation**: wrap the routes with Hono's `bodyLimit` middleware (or the equivalent at nginx / Cloud Run / a cloud WAF) — `app.use("/verify", bodyLimit({ maxSize: 16 * 1024 }))` is the canonical pattern for kawasekit-sized payloads (PAYMENT-SIGNATURE headers are < 1 KB after base64). Same defence layer as 2.3 (rate-limiting). |
 
 ### Where the mitigations live
 
@@ -211,6 +228,7 @@ The facilitator owns:
 | 2.6 | facilitator EOA signing data not in its intended scope | ✅ Mitigated | The facilitator only signs `transferWithAuthorization` calls on tokens specified by the verified payload. It does not expose a generic signing endpoint. There is no path from a malicious payload to a non-transfer call from this EOA. |
 | 2.7 | Misconfigured `network`/`chain.id` (mainnet broadcast on testnet config) | ✅ Mitigated | M4-1 required `network` argument fails fast at construction if the chain identity disagrees. Without this check (M3 behaviour), an operator could have silently broadcast against the wrong network. |
 | 2.8 | settle tx reorg (content delivered, payment reverted) | ✅ Mitigated | Polygon PoS can reorganise recent blocks before finality. `createSelfFacilitator` waits for the settle receipt with a **chain-aware confirmation depth**: testnet defaults to `1` (fast dev loops), mainnet defaults to `4` (~8 s of soft finality at Polygon's ~2 s block time, suitable for kawasekit's small-value paywall hits). Operators with high-value merchant flows pass `confirmations: 32` or higher (and bump `receiptTimeoutMs` accordingly) for stronger finality. The setting flows into viem's `waitForTransactionReceipt({ confirmations })` so the facilitator only returns success once the depth is reached on the public client's RPC. See `src/x402/facilitator.ts` (the `defaultConfirmations` computation immediately after the network check) and `docs/THREAT_MODEL.md` §6.6 for the design rationale. The default is documented in the `CreateSelfFacilitatorParams.confirmations` JSDoc with a pointer to the threat ID. |
+| 2.9 | Revoke UserOp reorg (revoke mines, then chain reorgs to a fork where it didn't) | ⚠️ Operator responsibility | Same primitive concern as 2.8, applied to the revoke path instead of the settle path: `revokeSessionKey` waits for `transactionHash` inclusion but does not currently apply the chain-aware `confirmations` policy (`src/session/revoke.ts`). On a Polygon mainnet reorg the validator could re-appear under the smart account in the forked branch. **Recommendation**: until the SDK threads `confirmations` into the revoke path (planned recipe in §6.3), operators on mainnet should treat `revokeSessionKey`'s receipt as soft-final, watch the bundler / RPC for the same `transactionHash` in subsequent blocks, and only consider the revoke "settled" once depth-of-4-blocks is reached — i.e. the same threshold as 2.8 mainnet defaults. This intersects the H3 mitigation playbook (`docs/recipes/revoke-race-mitigation.md`): Layer 2 (merchant kill-switch) should not be lifted before this depth is reached. |
 
 ### Where the mitigations live
 
@@ -310,6 +328,7 @@ that calls `JPYC.transfer()`. EIP-3009 is **not** used here because JPYC v2's
 | 4.5 | Daily-limit accounting reset by reissuing session key | ✅ Mitigated | Reissuing a session key (installing a new validator instance under the smart account's `regular` slot) does start that validator's daily counter at zero — that part is mechanically true. The mitigation is that **only the owner (sudo authority) can install a new validator**; a compromised session key cannot reissue itself out from under the policy. Owner-driven reissue is by definition authorised — the owner is the trust root. So an attacker who controls a session key sees the daily-limit cap as a hard ceiling per validator instance and cannot circumvent it by triggering a reissue from below the trust root. **Trust assumption:** this argument assumes the owner key is uncompromised, consistent with the trust assumption stated at the §4 head. If the owner key is compromised, the daily-limit ceiling is no longer meaningful — the attacker can install an arbitrary validator with an arbitrary policy (or no policy at all). Owner key custody is therefore the load-bearing assumption, not the session-key policy itself. The session-key daily limit is a defence-in-depth layer behind a healthy owner key, not an independent containment boundary. |
 | 4.6 | Malicious paymaster targeting account-level metadata | 🔵 Out of scope | Paymasters see UserOp metadata (sender, target, calldata). For a JPYC `transfer`, this means: who paid whom, when, how much. This is **on-chain public** after inclusion; the paymaster sees it at most a few seconds early. kawasekit does not consider this a confidentiality breach because the data is public. Operators wanting confidential payments need a different primitive. |
 | 4.7 | EIP-3009 attempted from smart-account `from` | ✅ Mitigated | **SDK code does not itself reject smart-account `from` — the defence rests on JPYC v2's pure-`ecrecover` implementation (out-of-scope per §0), which has no ERC-1271 fallback.** kawasekit's facilitator does not add a separate guard because the token contract is the authoritative source of truth. Empirical verification: `fiat/ECRecover.sol` (the JPYC v2 signature recovery helper) calls `ecrecover` directly without consulting any `isValidSignature` interface on the `from` address — a smart account cannot satisfy this path because `ecrecover` returns a different EOA (or the zero address) when given a digest that the smart account would have signed via its own authentication. The facilitator's `verify` then matches the recovered address against `auth.from` and rejects with `invalid_exact_evm_payload_signature` (`src/x402/facilitator.ts`, the `recoverTypedDataAddress` + `getAddress(recovered) !== getAddress(auth.from)` check). The `✅` verdict is contingent on JPYC v2 remaining pure-ecrecover; if a future JPYC version adds ERC-1271 support (which is the natural smart-account-friendly evolution), this threat must be re-evaluated and an SDK-side guard may need to land. |
+| 4.8 | Kernel nonce-key collision routes a UserOp to the wrong validator | 🔵 Out of scope | Kernel v3.1 routes UserOps to validators by the 192-bit nonce key embedded in the UserOp's nonce (`entryPoint.getNonce(account, key)`). kawasekit derives one nonce key per session-key validator via the ZeroDev SDK's helper, so collisions inside kawasekit's own derivation are not a SDK-code concern — but a third-party plugin installed in the same Kernel account could in principle pick a colliding key and intercept a UserOp the user expected to go to the session-key validator (or vice versa). This is **Kernel's routing concern**, not kawasekit's. **Trust assumption**: the operator does not install third-party Kernel plugins in the same account as kawasekit's session-key validator without verifying the plugin's nonce-key derivation does not collide. kawasekit's own examples never install a non-kawasekit regular plugin alongside the session-key validator. |
 
 ### Where the mitigations live
 
@@ -476,10 +495,16 @@ notes that constrain what any of these layers can actually stop.
 daily-limit policy enforces transaction count and per-transfer amount, not a
 cumulative JPYC value cap.
 
-**Consequence.** A session key bound to `maxPerTransfer = 10 JPYC` × `maxTransfersPerDay = 100`
-can move 1000 JPYC/day. Operators wanting a true cumulative cap need to
-combine the policy with off-chain tracking, or build a custom policy
-contract.
+**Consequence.** A session key bound to `maxPerTransfer = 100 JPYC` ×
+`maxTransfersPerDay = 1000` can move **100,000 JPYC/day (≒ 10 万円)** —
+the policy enforces transaction-count and per-transfer caps separately, not
+their product as a cumulative JPY-denominated limit. Operators wanting a
+true cumulative cap need to combine the policy with off-chain tracking, or
+build a custom policy contract. **Multi-session-key compounding**: an owner
+who issues multiple session keys to the same agent stacks the per-key
+cap — the on-chain policy has no notion of a shared ceiling across keys, so
+the effective daily exposure is `Σ (per-key cap)` rather than a single
+ceiling.
 
 **Mitigation path.** Custom policy contract (M5+). The composition of
 existing policies covers the M3/M4 use cases.
@@ -577,6 +602,84 @@ and later, unless the reporter prefers anonymity.
 
 ---
 
+## 8. Regulatory affordances (informative)
+
+This section is **informative**, not a compliance certification. JPYC is a
+Japanese-yen-pegged stablecoin classified as 電子決済手段 (electronic
+payment instrument) under 改正資金決済法 (the revised Payment Services
+Act), issued by JPYC Inc. (a registered Type II Fund Transfer Service
+Provider). Operators embedding kawasekit in a regulated context — KYC'd
+merchants, AML-screened payouts, travel-rule-bound transfers — should
+understand which compliance affordances the SDK provides and which
+remain the operator's responsibility. Each item below separates the
+**SDK affordance** (what kawasekit ships today) from the **operator
+responsibility** (what must be done outside the SDK).
+
+### 8.1. Transaction logging
+
+- **SDK affordance**: `src/logger/` ships a no-op logger by default and
+  accepts a pluggable `Logger` implementation. Observability hooks
+  (`src/observability/hooks.ts`) emit structured `ClientPaymentEvent` /
+  `SettleEvent` / `VerifyEvent` records with `requestUrl`, `payer`,
+  `amount`, `network`, `transaction` (where available), and
+  durations / failure reasons. These route to a Prometheus registry
+  (`kawasekit/observability/prometheus`) or an OTLP exporter
+  (`kawasekit/observability/otlp`) without per-operator wiring.
+- **Operator responsibility**: long-term audit-grade storage, retention
+  windows, write-once / append-only durability, and access control on
+  the resulting log. kawasekit does not bundle a storage backend and
+  does not enforce retention.
+
+### 8.2. Payload metadata exposure (originator / beneficiary)
+
+- **SDK affordance**: the x402 wire format reveals `from`, `to`,
+  `amount`, `network`, and the EIP-3009 nonce on every settlement —
+  after on-chain inclusion these are public. Pre-settlement, the
+  PAYMENT-SIGNATURE header carries the same set to the facilitator and
+  any HTTP intermediaries (Threat 1.3 / 1.10).
+- **Operator responsibility**: deciding whether `from` / `to` qualify as
+  "originator" / "beneficiary" for travel-rule purposes is a regulatory
+  determination the operator makes. kawasekit does not classify them.
+
+### 8.3. Travel rule (FATF Recommendation 16) support
+
+- **SDK affordance**: **none**. kawasekit ships no mechanism to attach
+  off-chain originator / beneficiary identity metadata to a payment;
+  the x402 wire format has no field for it.
+- **Operator responsibility**: any required travel-rule message exchange
+  (IVMS 101 envelope or equivalent) must happen at a layer outside
+  kawasekit — typically a side-channel between the merchant's compliance
+  system and the payer's compliance system, keyed by the on-chain
+  `transactionHash` after settlement.
+
+### 8.4. AML pre-settle screening hook
+
+- **SDK affordance**: **none today**. There is no `beforeSettle` /
+  `onPaymentSubmit` hook on `createSelfFacilitator` that an operator can
+  use to call a sanctions screening service (Chainalysis, Elliptic,
+  TRM) before the on-chain broadcast. The existing observability hooks
+  emit events *after* outcomes (`onSettle`, `onVerifyFailure`), which
+  is the wrong phase for a screening gate.
+- **Operator responsibility**: AML screening must be wrapped *around*
+  the facilitator at the HTTP layer — the Hono adapter exposes
+  `/verify` and `/settle` for the operator to wrap with their preferred
+  screening middleware. If the operator's compliance policy requires
+  pre-settle screening they should refuse the merchant's `/settle` call
+  until the screening returns a verdict, then proxy to kawasekit's
+  handler.
+
+### 8.5. Regulator response
+
+- **SDK affordance**: the on-chain `transactionHash`,
+  `paymentRequirements`, and `PAYMENT-SIGNATURE` can be reproduced from
+  the structured logs (§8.1) for forensic reconstruction.
+- **Operator responsibility**: receiving, evaluating, and responding to
+  formal regulator requests is an operator-side legal process. kawasekit
+  does not provide a regulator interface and does not respond to legal
+  process directed at the operator on the operator's behalf.
+
+---
+
 ## Appendix A — Revision history
 
 This document is revised every time an external review (formal or informal)
@@ -599,3 +702,4 @@ reader can audit the integrity of the threat model over time.
 | 2026-05-29 | k0yote | Closed `THREAT_MODEL_REVIEW_2026-05-29.md` **H3** (revoke race operator runbook). New `docs/recipes/revoke-race-mitigation.md` documents a four-layer operator playbook for the minutes-window response between detecting a session-key compromise and the revoke UserOp landing on-chain: Layer 1 (SDK `revokeSessionKey` call with concrete latency table), Layer 2 (off-chain merchant endpoint kill-switch via Hono adapter env flag / nginx maintenance mode), Layer 3 (paymaster sponsorship freeze via ZeroDev policy deny-list), Layer 4 (bundler mempool monitoring via `debug_bundler_dumpMempool`). §6.3 "Operator mitigation today" now points at the recipe. Residual-risk and roadmap sections constrain expectations: even with all four layers, any UserOp the session key signed before Layer 1 lands can still mine, bounded by the per-validator daily policy cap. The structural M5 fix (`invalidateInFlightNonces` in the same revoke UserOp) is referenced. |
 | 2026-05-29 | k0yote | Closed `THREAT_MODEL_REVIEW_2026-05-29.md` **H5** (example PK provider abstraction). `examples/agent-x402-jpyc/` now loads private keys through `createPkProvider(uri)` (`examples/agent-x402-jpyc/lib/pk-provider.ts`) — supported schemes are `env://VARNAME` (demo, emits a loud `console.warn` on construction, `kind: "demo"`) and `kms://<resource>` (production posture, intentionally throws today with a pointer to the recipes). All three PK loaders in the example moved to the abstraction: `agent/index.ts` (`AGENT_PAYER_PK_URI`), `server/index.ts` (`X402_FACILITATOR_PK_URI`), `scripts/session-demo.ts` (`OWNER_PK_URI` + `AGENT_PAYER_PK_URI`). README gained a "Switching to production: replace `env://` with `kms://`" section showing the integrator that the URI scheme is the first decision. Threat 5.6 notes updated to cite the abstraction. The intent is to stop new integrators copying a bare `process.env.PRIVATE_KEY` read as a "this is fine" pattern; the example posture now makes the demo-vs-production boundary visible in the code, not just in prose. |
 | 2026-05-29 | k0yote | Closed `THREAT_MODEL_REVIEW_2026-05-29.md` **H2** (`createX402PaymentSigner` asset whitelist). The optional `domainOverride` field on `CreateX402PaymentSignerParams` was replaced with a required discriminated `asset: { kind: "known"; id: KnownAssetId } \| { kind: "unsafeOverride"; domain: { name; version; verifyingContract } }`. The signer pins the EIP-712 domain at construction time (rejecting unknown ids and malformed overrides via the new `X402InvalidConfigError`) and cross-checks `paymentRequirements.asset` against `verifyingContract` at every sign call — the wire-format `extra.name` / `extra.version` are no longer consulted, removing the Threat 1.4 footgun for the JPYC-native default case. New `src/tokens/known-assets.ts` is the canonical whitelist (JPYC v2 only at v0.1.0-alpha.2). All 30+ callsites in `src/`, `scripts/`, and `examples/` updated to pass `asset: { kind: "known", id: "jpyc-v2" }`. Threat 1.4 verdict notes rewritten to cite the construction-time pinning + sign-time cross-check; "asset whitelist (Threat 1.4)" describe in `src/x402/client.test.ts` covers happy path, asset-mismatch refusal, `unsafeOverride` happy path, and three `X402InvalidConfigError` paths. `X402InvalidConfigError`, `X402AssetParam`, `KnownAssetId`, `KnownAssetDomain`, `getKnownAssetDomain`, `listKnownAssetIds` added to the public API surface (root + `kawasekit/x402` subpath). |
+| 2026-05-29 | k0yote | Closed `THREAT_MODEL_REVIEW_2026-05-29.md` **M1–M6** (documentation polish). **M1**: §0 gained a new "Methodology" sub-section noting that the threat enumeration applies STRIDE + supply-chain risk as informal checklists per layer, with no formal completeness proof — completeness is deferred to external review / third-party audit. **M2**: new §8 "Regulatory affordances (informative)" enumerates SDK affordance vs. operator responsibility across transaction logging, payload metadata exposure, travel-rule support, AML pre-settle screening, and regulator response — explicitly **not** a compliance certification. **M3**: four new threats added — 1.12 (client clock skew breaks `validAfter` / `validBefore`, ⚠️), 1.13 (JSON payload DoS at `/verify` and `/settle`, ⚠️ recommending Hono `bodyLimit`), 2.9 (revoke UserOp reorg, ⚠️ — intersection with H3 recipe), 4.8 (Kernel nonce-key collision, 🔵 with explicit trust assumption). **M4**: §6.4 numerical example corrected from `10 JPYC × 100 = 1000 JPYC/day` to `100 JPYC × 1000 = 100,000 JPYC/day (≒ 10 万円)` and now flags multi-session-key compounding. **M5**: §0.5 heading renamed from "Layer 0 — Supply chain & build integrity" to "Supply chain & build integrity (Layer 0)" to eliminate the dual numbering; §0 reading-guide cross-reference adjusted to match. **M6**: Threat 1.11 notes append an [EIP-2](https://eips.ethereum.org/EIPS/eip-2) citation confirming viem's low-`s` enforcement and JPYC v2's `n/2` guard both reference the same canonical bound. §0 reading-guide also updated to mention the new §8. |
