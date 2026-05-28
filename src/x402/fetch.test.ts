@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { privateKeyToAccount } from "viem/accounts";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { readBody, withHttpListener } from "../../test/helpers/http-listener";
 import { JPYC_V2_ADDRESS } from "../tokens/jpyc";
 import { createX402PaymentSigner } from "./client";
@@ -10,7 +10,7 @@ import {
 	X402_HEADER_PAYMENT_REQUIRED,
 	X402_HEADER_PAYMENT_RESPONSE,
 } from "./encoding";
-import { wrapFetch } from "./fetch";
+import { type WrapFetchParams, wrapFetch } from "./fetch";
 import type {
 	X402PaymentPayload,
 	X402PaymentRequiredResponse,
@@ -86,7 +86,7 @@ describe("wrapFetch — pass-through", () => {
 				res.end(JSON.stringify({ free: true }));
 			},
 			async (baseUrl) => {
-				const fetch402 = wrapFetch({ signer });
+				const fetch402 = wrapFetch({ signer, onPayment: () => true });
 				const res = await fetch402(`${baseUrl}/free`);
 				expect(res.status).toBe(200);
 				expect(await res.json()).toEqual({ free: true });
@@ -100,7 +100,7 @@ describe("wrapFetch — pass-through", () => {
 		await withHttpListener(
 			paywallHandler({ payload: { ...build402(), accepts: [] } }),
 			async (baseUrl) => {
-				const fetch402 = wrapFetch({ signer });
+				const fetch402 = wrapFetch({ signer, onPayment: () => true });
 				const res = await fetch402(`${baseUrl}/x`);
 				expect(res.status).toBe(402);
 			},
@@ -116,7 +116,7 @@ describe("wrapFetch — pass-through", () => {
 				res.end("payment required, friend");
 			},
 			async (baseUrl) => {
-				const fetch402 = wrapFetch({ signer });
+				const fetch402 = wrapFetch({ signer, onPayment: () => true });
 				const res = await fetch402(`${baseUrl}/x`);
 				expect(res.status).toBe(402);
 			},
@@ -136,7 +136,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 				},
 			}),
 			async (baseUrl) => {
-				const fetch402 = wrapFetch({ signer });
+				const fetch402 = wrapFetch({ signer, onPayment: () => true });
 				const res = await fetch402(`${baseUrl}/weather`);
 				expect(res.status).toBe(200);
 				expect(await res.json()).toEqual({ weather: "sunny" });
@@ -153,7 +153,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 		await withHttpListener(
 			paywallHandler({ includeHeader: false, includeBody: true }),
 			async (baseUrl) => {
-				const fetch402 = wrapFetch({ signer });
+				const fetch402 = wrapFetch({ signer, onPayment: () => true });
 				const res = await fetch402(`${baseUrl}/weather`);
 				expect(res.status).toBe(200);
 			},
@@ -163,7 +163,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 	it("preserves PAYMENT-RESPONSE header from the success response", async () => {
 		const signer = createX402PaymentSigner({ network: "testnet", account });
 		await withHttpListener(paywallHandler({}), async (baseUrl) => {
-			const fetch402 = wrapFetch({ signer });
+			const fetch402 = wrapFetch({ signer, onPayment: () => true });
 			const res = await fetch402(`${baseUrl}/weather`);
 			expect(res.headers.get(X402_HEADER_PAYMENT_RESPONSE)).toBe("encoded-settlement-here");
 		});
@@ -179,7 +179,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 				},
 			}),
 			async (baseUrl) => {
-				const fetch402 = wrapFetch({ signer });
+				const fetch402 = wrapFetch({ signer, onPayment: () => true });
 				await fetch402(`${baseUrl}/weather`, {
 					method: "POST",
 					headers: { "content-type": "application/json" },
@@ -200,7 +200,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 				},
 			}),
 			async (baseUrl) => {
-				const fetch402 = wrapFetch({ signer });
+				const fetch402 = wrapFetch({ signer, onPayment: () => true });
 				await fetch402(`${baseUrl}/weather`, {
 					method: "POST",
 					headers: { "content-type": "application/json" },
@@ -228,7 +228,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 				res.end(JSON.stringify(build402()));
 			},
 			async (baseUrl) => {
-				const fetch402 = wrapFetch({ signer });
+				const fetch402 = wrapFetch({ signer, onPayment: () => true });
 				await fetch402(`${baseUrl}/x`, { headers: { Authorization: "Bearer caller-token" } });
 				expect(retryAuthHeader).toBe("Bearer caller-token");
 			},
@@ -247,7 +247,7 @@ describe("wrapFetch — sign-and-retry happy path", () => {
 				},
 			}),
 			async (baseUrl) => {
-				const fetch402 = wrapFetch({ signer });
+				const fetch402 = wrapFetch({ signer, onPayment: () => true });
 				await fetch402(`${baseUrl}/x`);
 				expect(echoed).toEqual({
 					url: "https://api.example.com/weather",
@@ -277,6 +277,7 @@ describe("wrapFetch — selectRequirements policy", () => {
 					signer,
 					selectRequirements: (accepts) =>
 						[...accepts].sort((a, b) => Number(BigInt(a.amount) - BigInt(b.amount)))[0] ?? null,
+					onPayment: () => true,
 				});
 				await fetch402(`${baseUrl}/x`);
 				expect(chosenAmount).toBe("1000");
@@ -288,7 +289,11 @@ describe("wrapFetch — selectRequirements policy", () => {
 		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const signSpy = vi.spyOn(signer, "sign");
 		await withHttpListener(paywallHandler({}), async (baseUrl) => {
-			const fetch402 = wrapFetch({ signer, selectRequirements: () => null });
+			const fetch402 = wrapFetch({
+				signer,
+				selectRequirements: () => null,
+				onPayment: () => true,
+			});
 			const res = await fetch402(`${baseUrl}/x`);
 			expect(res.status).toBe(402);
 			expect(signSpy).not.toHaveBeenCalled();
@@ -330,12 +335,28 @@ describe("wrapFetch — onPayment hook", () => {
 	});
 });
 
+describe("wrapFetch — onPayment is required at the type level", () => {
+	// THREAT_MODEL.md Threat 1.8 / §6.1: omitting `onPayment` would silently
+	// default to "always pay", so it must be a compile-time error.
+	it("rejects WrapFetchParams that omits onPayment", () => {
+		expectTypeOf<WrapFetchParams>().toHaveProperty("onPayment");
+		expectTypeOf<WrapFetchParams["onPayment"]>().not.toBeUndefined();
+
+		// Positive control — the canonical shape must remain assignable.
+		const validParams = {
+			signer: createX402PaymentSigner({ network: "testnet", account }),
+			onPayment: () => true,
+		};
+		expectTypeOf(validParams).toMatchTypeOf<WrapFetchParams>();
+	});
+});
+
 describe("wrapFetch — custom fetch", () => {
 	it("uses the caller-supplied fetch implementation", async () => {
 		const signer = createX402PaymentSigner({ network: "testnet", account });
 		const customFetch = vi.fn(globalThis.fetch);
 		await withHttpListener(paywallHandler({}), async (baseUrl) => {
-			const fetch402 = wrapFetch({ signer, fetch: customFetch });
+			const fetch402 = wrapFetch({ signer, fetch: customFetch, onPayment: () => true });
 			await fetch402(`${baseUrl}/x`);
 			// One call for the initial 402, one for the retry.
 			expect(customFetch).toHaveBeenCalledTimes(2);

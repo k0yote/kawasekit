@@ -167,12 +167,34 @@ Client (any `fetch` becomes x402-aware):
 import { createX402PaymentSigner, wrapFetch } from "kawasekit";
 import { privateKeyToAccount } from "viem/accounts";
 
-const signer = createX402PaymentSigner({ account: privateKeyToAccount("0x...") });
-const fetch402 = wrapFetch({ signer });
+const signer = createX402PaymentSigner({ network: "testnet", account: privateKeyToAccount("0x...") });
+
+// onPayment is *required* at the type level — kawasekit refuses to default
+// to "always pay" silently. The callback is your budget guard.
+let spent = 0n;
+const MAX_SPEND = 100_000n; // 100 JPYC (6 decimals)
+const fetch402 = wrapFetch({
+  signer,
+  onPayment: (req) => {
+    const next = spent + BigInt(req.amount);
+    if (next > MAX_SPEND) return false; // budget exhausted → 402 returned
+    spent = next;
+    return true;
+  },
+});
 
 const res = await fetch402("https://api.example.com/weather/Tokyo");
-// → 402 → signed retry → 200 with JPYC settled on-chain
+// → 402 → onPayment guard → signed retry → 200 with JPYC settled on-chain
 ```
+
+> **⚠️ Call-level idempotency only.** kawasekit guarantees that a single
+> `fetch402(...)` call settles **at most once** (EIP-3009 nonce + viem
+> `nonceManager`). It does **not** prevent your agent from invoking
+> `fetch402(...)` twice for the same reasoning step — retries, regeneration,
+> pause-resume, and multi-agent fan-out can each cause duplicate charges.
+> **Step-level idempotency is your responsibility**: track an
+> `Idempotency-Key` per reasoning step at the agent framework layer.
+> See [`docs/THREAT_MODEL.md` §6.1](./docs/THREAT_MODEL.md#61-reasoning-step-idempotency-gap) for the threat boundary.
 
 ### Session-key lifecycle (M3-2)
 

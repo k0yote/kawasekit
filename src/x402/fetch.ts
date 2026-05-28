@@ -67,13 +67,21 @@ export interface WrapFetchParams {
 		response: Response,
 	) => X402PaymentRequirements | null;
 	/**
-	 * Optional hook invoked just before the retry request goes out. Receives
+	 * Required gate invoked just before the retry request goes out. Receives
 	 * the chosen requirements and the parsed 402 body so the caller can log
 	 * spending, prompt the user, or enforce a budget.
 	 *
 	 * Returning `false` aborts the retry — the original 402 is returned.
+	 * Returning `true` (or `undefined`) proceeds with the signed retry.
+	 *
+	 * This callback is **required** at the type level: a 402 retry transfers
+	 * real funds, and kawasekit refuses to default to "always pay" silently.
+	 * If your caller already enforces a budget elsewhere, return `true`
+	 * explicitly — the empty function `() => true` is a deliberate opt-in.
+	 *
+	 * See `docs/THREAT_MODEL.md` Threat 1.8 / §6.1.
 	 */
-	readonly onPayment?: (
+	readonly onPayment: (
 		requirements: X402PaymentRequirements,
 		paymentRequired: X402PaymentRequiredResponse,
 	) => boolean | undefined | Promise<boolean | undefined>;
@@ -137,7 +145,18 @@ function defaultSelectRequirements(
  * const signer = createX402PaymentSigner({
  *   account: privateKeyToAccount(process.env.PAYER_PK as `0x${string}`),
  * });
- * const fetch402 = wrapFetch({ signer });
+ *
+ * let spent = 0n;
+ * const MAX_SPEND = 100_000n; // 100 JPYC (6 decimals)
+ * const fetch402 = wrapFetch({
+ *   signer,
+ *   onPayment: (req) => {
+ *     const next = spent + BigInt(req.amount);
+ *     if (next > MAX_SPEND) return false; // budget exhausted
+ *     spent = next;
+ *     return true;
+ *   },
+ * });
  *
  * const res = await fetch402("https://api.example.com/weather?city=Tokyo");
  * console.log(await res.json());
@@ -184,12 +203,10 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 			return initialResponse;
 		}
 
-		if (onPayment) {
-			const proceed = await onPayment(chosen, paymentRequired);
-			if (proceed === false) {
-				emitFailure("onPayment_declined", 402);
-				return initialResponse;
-			}
+		const proceed = await onPayment(chosen, paymentRequired);
+		if (proceed === false) {
+			emitFailure("onPayment_declined", 402);
+			return initialResponse;
 		}
 
 		const paymentPayload = await params.signer.sign({
