@@ -1,0 +1,30 @@
+name: Assert supply chain policy
+description: >-
+  Verify that pnpm-workspace.yaml's `minimumReleaseAge` setting matches the
+  expected hold window. Catches operator drift: if someone silently removes or
+  downgrades the setting, the next `pnpm install` would start accepting
+  freshly-published versions without this step failing first.
+
+  Rationale: see `docs/THREAT_MODEL.md` §0.5 Layer 0 / Threat 0.1 and
+  `pnpm-workspace.yaml`'s policy comment.
+
+inputs:
+  expected:
+    description: The required `minimumReleaseAge` value (e.g. `1d`).
+    required: false
+    default: "1d"
+
+runs:
+  using: composite
+  steps:
+    - name: Check pnpm minimumReleaseAge
+      shell: bash
+      env:
+        EXPECTED_MIN_RELEASE_AGE: ${{ inputs.expected }}
+      run: |
+        actual="$(pnpm config get minimumReleaseAge)"
+        if [ "$actual" != "$EXPECTED_MIN_RELEASE_AGE" ]; then
+          echo "::error::pnpm-workspace.yaml minimumReleaseAge must be \"$EXPECTED_MIN_RELEASE_AGE\", got \"$actual\""
+          exit 1
+        fi
+        echo "OK: pnpm minimumReleaseAge = $actual"

@@ -48,17 +48,10 @@ jobs:
           version: stable
 
       # Supply chain policy assertion (THREAT_MODEL.md §0.5 / Threat 0.1).
-      # See the matching step in ci.yml for rationale.
-      - name: Assert supply chain policy (minimumReleaseAge=1d)
-        env:
-          EXPECTED_MIN_RELEASE_AGE: "1d"
-        run: |
-          actual="$(pnpm config get minimumReleaseAge)"
-          if [ "$actual" != "$EXPECTED_MIN_RELEASE_AGE" ]; then
-            echo "::error::pnpm-workspace.yaml minimumReleaseAge must be \"$EXPECTED_MIN_RELEASE_AGE\", got \"$actual\""
-            exit 1
-          fi
-          echo "OK: pnpm minimumReleaseAge = $actual"
+      # Shared composite action so this workflow stays byte-equivalent with
+      # ci.yml and cannot drift silently.
+      - name: Assert supply chain policy
+        uses: ./.github/actions/assert-supply-chain-policy
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
