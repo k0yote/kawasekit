@@ -41,7 +41,7 @@ import {
 	http,
 	parseUnits,
 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { nonceManager, privateKeyToAccount } from "viem/accounts";
 import {
 	buildPaymentRequirements,
 	createSelfFacilitator,
@@ -89,7 +89,9 @@ async function main(): Promise<void> {
 	}
 
 	const payer = privateKeyToAccount(payerPk);
-	const facilitatorAccount = privateKeyToAccount(facilitatorPk);
+	// `nonceManager` is required by createSelfFacilitator (M4-6.5 enforcement)
+	// to serialise nonces under concurrent settle. See SDK JSDoc.
+	const facilitatorAccount = privateKeyToAccount(facilitatorPk, { nonceManager });
 	const recipientRaw = optionalEnv("X402_RECIPIENT");
 	const recipient: Address = recipientRaw ? getAddress(recipientRaw) : payer.address;
 	const amount = parseUnits(amountHuman, JPYC_DECIMALS);

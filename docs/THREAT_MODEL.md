@@ -182,7 +182,7 @@ The facilitator owns:
 | # | Threat | Verdict | Notes |
 |---|---|---|---|
 | 2.1 | Theft of facilitator EOA key | ⚠️ Operator responsibility | Compromise drains the EOA's gas balance (POL). It does **not** drain user JPYC — the EOA never holds JPYC. Impact is denial of service against the paywall, not theft of payer funds. Mitigation lives in operator key custody (HSM / KMS / Vault — `recipes/` chapter, M4). |
-| 2.2 | Concurrent settle nonce race | ⚠️ Operator responsibility | Parallel `settle()` from the same facilitator EOA reads the same on-chain nonce N for each `writeContract`, so only one tx lands and the rest revert as nonce-collisions — a correctness failure (settlement silently dropped) surfaced in M3-3 testing. The fix is to attach viem's `nonceManager` to the facilitator's `Account` at construction time, which serialises the local nonce. **The SDK currently does NOT enforce this at runtime** — `createSelfFacilitator` does not introspect `walletClient.account` for a `nonceManager`, so a misconfigured caller still constructs successfully and silently drops settlements under fan-out. The mitigation today is JSDoc + example wiring (`createSelfFacilitator` JSDoc `@example`, `examples/agent-x402-jpyc/server/index.ts`). Per §0's definition (`✅ = code in the SDK prevents the attack`) this fails to meet the `✅` bar; the verdict is downgraded to `⚠️ Operator responsibility` until SDK-level enforcement lands. Tracked in §6.5. |
+| 2.2 | Concurrent settle nonce race | ✅ Mitigated | Parallel `settle()` from the same facilitator EOA would read the same on-chain nonce N for each `writeContract`, so only one tx would land and the rest would revert as nonce-collisions — a correctness failure (settlement silently dropped) surfaced in M3-3 testing. The fix is to attach viem's `nonceManager` to the facilitator's `Account` at construction time, which serialises the local nonce. `createSelfFacilitator` enforces this at construction time: it introspects `walletClient.account.nonceManager` and throws with an actionable error message if absent (`src/x402/facilitator.ts`, the check sits immediately after the chain/network guards). Two unit tests (`src/x402/facilitator.self.test.ts` under "nonceManager enforcement (threat 2.2)") cover both the throw path and the happy path. The mitigation now meets §0's `✅ = SDK code prevents the attack` bar. |
 | 2.3 | DoS via repeated invalid `/verify` calls | ⚠️ Operator responsibility | An attacker can feed crafted payloads that fail at simulation, costing the facilitator no gas but consuming RPC reads. kawasekit does no rate-limiting. **Recommendation**: rate-limit at the HTTP layer (the Hono adapter exposes `/verify` and `/settle` for the operator to wrap). |
 | 2.4 | MEV sandwich on settle | 🔵 Out of scope | `transferWithAuthorization` is a fixed-amount, fixed-recipient transfer with no slippage. There is no profitable sandwich. The only MEV available is censorship (reorder to delay), which the time window upper-bounds. |
 | 2.5 | Gas grief — pushing receiptTimeoutMs past completion | ⚠️ Operator responsibility | Default `receiptTimeoutMs = 60_000`. If the bundler / chain is congested, settle may return `unexpected_settle_error` even though the tx eventually lands. The operator should not double-broadcast on this error — the nonce will already be marked used. **Recommendation**: surface `txHash` in error path (already done in `failSettle`) and let the operator probe the chain rather than retry blindly. |
@@ -447,26 +447,24 @@ contract.
 **Mitigation path.** Custom policy contract (M5+). The composition of
 existing policies covers the M3/M4 use cases.
 
-### 6.5. `nonceManager` enforcement is not at the SDK level
+### 6.5. `nonceManager` enforcement at the SDK level — **closed**
 
-**Gap.** `createSelfFacilitator` (`src/x402/facilitator.ts`) requires the
+**Status.** Closed in `v0.1.0-alpha.N` post-M4. `createSelfFacilitator`
+now performs a construction-time check on `walletClient.account.nonceManager`
+and throws an actionable error if absent. Threat 2.2 has been promoted
+from `⚠️ Operator responsibility` to `✅ Mitigated` in this revision.
+
+**Historical record (pre-fix gap).** Originally, the SDK required the
 bound `walletClient.account` to carry viem's `nonceManager` whenever the
-facilitator may settle multiple authorizations in parallel (threat 2.2),
-but the SDK does not introspect the account at construction time to
-verify this. JSDoc + `examples/agent-x402-jpyc/server/index.ts` show the
-correct wiring; nothing rejects the wrong wiring.
-
-**Consequence.** A misconfigured operator silently drops settlements
-under fan-out (LLM agents parallel-calling tool endpoints is the typical
-trigger). Direction is the opposite of double-spend — under-collection
-rather than over-collection. No funds are at risk on the user side; the
-merchant just loses billing events.
-
-**Mitigation path (post-M4 alpha).** Add a construction-time check that
-inspects `walletClient.account.nonceManager` and throws if absent, with
-an error message pointing at the JSDoc `@example`. Once the runtime
-check lands, threat 2.2 promotes from `⚠️ Operator responsibility` back
-to `✅ Mitigated`. Targeted at v0.1.0-alpha.N (small, low-risk patch).
+facilitator might settle multiple authorizations in parallel (threat
+2.2), but did NOT introspect the account at construction time. JSDoc +
+`examples/agent-x402-jpyc/server/index.ts` showed the correct wiring;
+nothing rejected the wrong wiring. A misconfigured operator silently
+dropped settlements under fan-out — direction opposite to double-spend
+(under-collection rather than over-collection). The fix added a runtime
+check at construction time with a copy-pasteable error message pointing
+operators at the canonical viem pattern, plus two unit tests covering
+the throw path and the happy path.
 
 ### 6.6. Reorg safety / confirmation depth is operator-set
 
@@ -532,3 +530,4 @@ reader can audit the integrity of the threat model over time.
 |---|---|---|
 | 2026-05-27 | k0yote | Initial draft (M4-3.1 — M4-3.6). Pending external review. |
 | 2026-05-28 | k0yote (M4 self-review) | Pre-external-review hardening pass: added Layer 0 (Supply chain & build integrity); added threats 1.9 (verify→settle TOCTOU), 1.10 (`transferWithAuthorization` front-running griefing), 1.11 (ECDSA s-malleability), 2.8 (settle tx reorg); demoted 2.2 (concurrent nonce race) from ✅ to ⚠️ because mitigation is doc-only and §0 requires `✅ = SDK code prevents`; rewrote 1.1 with empirical `fiat/EIP712.sol` reference; refined 1.3, 1.7, 4.5 wording. Added §6.5 (nonceManager enforcement), §6.6 (reorg safety / confirmation depth), §6.7 (adversarial base64 decoding) and the §6.1 privacy consideration. |
+| 2026-05-28 | k0yote | Implemented §6.5: `createSelfFacilitator` now performs a construction-time check on `walletClient.account.nonceManager` and throws with an actionable error if absent. Threat 2.2 promoted from `⚠️ Operator responsibility` back to `✅ Mitigated`. §6.5 marked **closed**. Callsites updated: `scripts/07-x402-self-settle.ts` and `src/x402/facilitator.self.test.ts` (test scaffold) now attach `nonceManager`. New unit tests cover the throw path and the happy path. |

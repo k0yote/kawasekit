@@ -293,6 +293,21 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 			`createSelfFacilitator: network="testnet" but walletClient.chain "${chain.name}" (chainId ${supportedChainId}) is a mainnet — refusing to broadcast with real funds`,
 		);
 	}
+
+	// Threat 2.2 (concurrent settle nonce race) enforcement. The facilitator
+	// will broadcast `transferWithAuthorization` calls in parallel under any
+	// fan-out workload (LLM agent tool calls are the canonical example).
+	// Without viem's nonceManager attached, every parallel `writeContract`
+	// reads the same on-chain nonce and only one tx lands — settlements
+	// silently dropped. Enforcing this at construction time means the
+	// failure mode shows up at boot, not at the first parallel hit in
+	// production. See `docs/THREAT_MODEL.md#22-concurrent-settle-nonce-race`.
+	if (walletClient.account.nonceManager === undefined) {
+		throw new Error(
+			'createSelfFacilitator: walletClient.account must be constructed with viem\'s `nonceManager` to serialise nonces under concurrent settle(). Example:\n  import { nonceManager, privateKeyToAccount } from "viem/accounts";\n  const account = privateKeyToAccount(pk, { nonceManager });\n  const walletClient = createWalletClient({ chain, transport, account });',
+		);
+	}
+
 	const network = chainIdToX402Network(supportedChainId);
 	const hooks = params.hooks;
 

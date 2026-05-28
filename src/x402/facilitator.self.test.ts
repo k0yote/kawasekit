@@ -13,7 +13,7 @@ import {
 	http,
 	parseUnits,
 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { nonceManager, privateKeyToAccount } from "viem/accounts";
 import { anvil } from "viem/chains";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { startAnvil, stopAnvil } from "../../test/helpers/anvil";
@@ -32,7 +32,11 @@ const BOB_PK = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b7869
 const PAY_TO_PK = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a" as const;
 
 const alice = privateKeyToAccount(ALICE_PK);
-const bob = privateKeyToAccount(BOB_PK);
+// `bob` is the facilitator EOA in every test below. M4-6.5 added a
+// construction-time check on `createSelfFacilitator` that requires its
+// walletClient.account to carry viem's nonceManager — attach it here so
+// every test passes the guard without each spelling out the requirement.
+const bob = privateKeyToAccount(BOB_PK, { nonceManager });
 const payToAccount = privateKeyToAccount(PAY_TO_PK);
 
 const POLYGON_AMOY_CHAIN_ID = 80_002;
@@ -557,5 +561,36 @@ describe("createSelfFacilitator — network mismatch fail-fast", () => {
 				publicClient,
 			}),
 		).toThrow(/refusing to broadcast with real funds/);
+	});
+});
+
+describe("createSelfFacilitator — nonceManager enforcement (threat 2.2)", () => {
+	it("throws at construction when walletClient.account lacks nonceManager", () => {
+		// Bob WITHOUT nonceManager — the failure mode the M4-6.5 guard catches.
+		const bobWithoutNonceManager = privateKeyToAccount(BOB_PK);
+		const danglingWallet = createWalletClient({
+			chain,
+			transport: http("http://127.0.0.1:0"),
+			account: bobWithoutNonceManager,
+		});
+		expect(() =>
+			createSelfFacilitator({
+				network: "testnet",
+				walletClient: danglingWallet,
+				publicClient,
+			}),
+		).toThrow(/nonceManager/);
+	});
+
+	it("constructs successfully when nonceManager is attached", () => {
+		// `bob` at module scope already carries nonceManager — this is the
+		// happy-path proof that the guard is not over-restrictive.
+		expect(() =>
+			createSelfFacilitator({
+				network: "testnet",
+				walletClient: bobWallet,
+				publicClient,
+			}),
+		).not.toThrow();
 	});
 });
