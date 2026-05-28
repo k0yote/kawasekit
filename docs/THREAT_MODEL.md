@@ -32,6 +32,11 @@ Out of scope:
 - Bundler / paymaster operator code (operated by third parties or the user)
 - The smart-contract repository `kawasekit-contracts` (separate threat model)
 
+The threat model covers six layers, from §0.5 Layer 0
+(Supply chain & build integrity) through §5 Layer 5 (Agent runtime).
+§6 records known limitations the SDK does not close in this release;
+§7 covers vulnerability reporting.
+
 Each layer below uses a fixed structure:
 
 - **Surface** — what the SDK exposes or does on this layer
