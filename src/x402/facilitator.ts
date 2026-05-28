@@ -228,6 +228,25 @@ export interface CreateSelfFacilitatorParams {
 	 */
 	readonly receiptTimeoutMs?: number;
 	/**
+	 * Number of block confirmations to wait past the settle tx inclusion
+	 * before considering settlement final. Mitigates threat 2.8 (settle
+	 * tx reorg producing a "content delivered, payment reverted" state)
+	 * by raising the bar past Polygon PoS's typical reorg depth.
+	 *
+	 * Chain-aware defaults if omitted:
+	 *  - testnet (Polygon Amoy): `1` — fast feedback for dev loops, no
+	 *    real funds at risk
+	 *  - mainnet (Polygon): `4` — roughly ~8 s of soft finality at
+	 *    Polygon's ~2 s block time, suitable for the small-value paywall
+	 *    hits kawasekit targets (sub-100 JPYC per call)
+	 *
+	 * For high-value merchants — or any deployment uncomfortable with
+	 * shallow reorg risk — raise this to 32+ and bump
+	 * {@link receiptTimeoutMs} so the timeout still accommodates the
+	 * wait. See `docs/THREAT_MODEL.md` §2.8 / §6.6.
+	 */
+	readonly confirmations?: number;
+	/**
 	 * Optional observability callbacks. Hooks are fire-and-forget — any throw
 	 * or rejection inside a hook is silently discarded and never propagates to
 	 * the verify / settle return path. See {@link ObservabilityHooks}.
@@ -275,6 +294,12 @@ export interface CreateSelfFacilitatorParams {
 export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Facilitator {
 	const { walletClient, publicClient } = params;
 	const receiptTimeoutMs = params.receiptTimeoutMs ?? 60_000;
+	// Chain-aware confirmation depth (threat 2.8 / §6.6 mitigation). Defaults
+	// kick in only when the operator did not pass an explicit value; the
+	// network-vs-isTestnet check below has already locked down which side we
+	// are on.
+	const defaultConfirmations = params.network === "mainnet" ? 4 : 1;
+	const confirmations = params.confirmations ?? defaultConfirmations;
 	const facilitatorChainId = walletClient.chain.id;
 	if (!isSupportedChainId(facilitatorChainId)) {
 		throw new Error(
@@ -592,6 +617,7 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 			const receipt = await publicClient.waitForTransactionReceipt({
 				hash: txHash,
 				timeout: receiptTimeoutMs,
+				confirmations,
 			});
 			if (receipt.status !== "success") {
 				return failSettle(req.paymentRequirements.network, "invalid_transaction_state", {

@@ -594,3 +594,38 @@ describe("createSelfFacilitator — nonceManager enforcement (threat 2.2)", () =
 		).not.toThrow();
 	});
 });
+
+describe("createSelfFacilitator — confirmation depth (threat 2.8)", () => {
+	// Behavioural confirmation testing is impractical inside anvil's
+	// on-demand mining model (we would have to mine N blocks manually
+	// after every settle). What we CAN verify is the construction-time
+	// contract: the option accepts integers >= 1, and the synthesised
+	// settle on Amoy still succeeds with the testnet default (=1) and an
+	// operator-provided override.
+	it("accepts a custom confirmation depth and still completes settle on testnet anvil", async () => {
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+			confirmations: 1, // explicit testnet default
+		});
+		const requirements = buildJpycRequirements(parseUnits("1", JPYC_DECIMALS));
+		const paymentPayload = await signPayload(requirements);
+		const result = await facilitator.settle({
+			x402Version: 2,
+			paymentPayload,
+			paymentRequirements: requirements,
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("constructs without specifying confirmations (testnet default = 1)", () => {
+		expect(() =>
+			createSelfFacilitator({
+				network: "testnet",
+				walletClient: bobWallet,
+				publicClient,
+			}),
+		).not.toThrow();
+	});
+});

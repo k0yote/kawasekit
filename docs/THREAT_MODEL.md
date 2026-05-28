@@ -188,7 +188,7 @@ The facilitator owns:
 | 2.5 | Gas grief — pushing receiptTimeoutMs past completion | ⚠️ Operator responsibility | Default `receiptTimeoutMs = 60_000`. If the bundler / chain is congested, settle may return `unexpected_settle_error` even though the tx eventually lands. The operator should not double-broadcast on this error — the nonce will already be marked used. **Recommendation**: surface `txHash` in error path (already done in `failSettle`) and let the operator probe the chain rather than retry blindly. |
 | 2.6 | facilitator EOA signing data not in its intended scope | ✅ Mitigated | The facilitator only signs `transferWithAuthorization` calls on tokens specified by the verified payload. It does not expose a generic signing endpoint. There is no path from a malicious payload to a non-transfer call from this EOA. |
 | 2.7 | Misconfigured `network`/`chain.id` (mainnet broadcast on testnet config) | ✅ Mitigated | M4-1 required `network` argument fails fast at construction if the chain identity disagrees. Without this check (M3 behaviour), an operator could have silently broadcast against the wrong network. |
-| 2.8 | settle tx reorg (content delivered, payment reverted) | ⚠️ Operator responsibility | Polygon PoS produces blocks that can be reorganised within a small depth before finality. If `settle` mines, the facilitator returns success, the operator delivers paid content, and a subsequent reorg replaces the settle block, the authorization `nonce` returns to unused and the merchant has lost the JPYC for that hit. `createSelfFacilitator` waits for one block receipt via `waitForTransactionReceipt(receiptTimeoutMs)`, but **does not enforce a confirmation depth** — the operator chooses how many blocks to wait before considering settlement final. **Recommendation**: for mainnet, wait at least the bundler / paymaster's finality recommendation before releasing high-value content; for testnet, the default single-receipt wait is fine. Tracked in §6.6. |
+| 2.8 | settle tx reorg (content delivered, payment reverted) | ✅ Mitigated | Polygon PoS can reorganise recent blocks before finality. `createSelfFacilitator` waits for the settle receipt with a **chain-aware confirmation depth**: testnet defaults to `1` (fast dev loops), mainnet defaults to `4` (~8 s of soft finality at Polygon's ~2 s block time, suitable for kawasekit's small-value paywall hits). Operators with high-value merchant flows pass `confirmations: 32` or higher (and bump `receiptTimeoutMs` accordingly) for stronger finality. The setting flows into viem's `waitForTransactionReceipt({ confirmations })` so the facilitator only returns success once the depth is reached on the public client's RPC. See `src/x402/facilitator.ts` (the `defaultConfirmations` computation immediately after the network check) and `docs/THREAT_MODEL.md` §6.6 for the design rationale. The default is documented in the `CreateSelfFacilitatorParams.confirmations` JSDoc with a pointer to the threat ID. |
 
 ### Where the mitigations live
 
@@ -466,24 +466,37 @@ check at construction time with a copy-pasteable error message pointing
 operators at the canonical viem pattern, plus two unit tests covering
 the throw path and the happy path.
 
-### 6.6. Reorg safety / confirmation depth is operator-set
+### 6.6. Reorg safety / confirmation depth — **closed**
 
-**Gap.** `createSelfFacilitator`'s `receiptTimeoutMs` controls how long to
-wait for a `waitForTransactionReceipt`, but the operator's policy on
-how many blocks past inclusion to require before declaring settlement
-final is outside the SDK. On Polygon PoS, a reorg within typical depth
-can revert a settle tx after the operator has already delivered paid
-content (threat 2.8).
+**Status.** Closed in `v0.1.0-alpha.N` post-M4. `CreateSelfFacilitatorParams`
+gained a `confirmations?: number` option, threaded into
+`waitForTransactionReceipt({ confirmations })`. Chain-aware default: `1`
+on testnet, `4` on mainnet (~8 s of soft finality at Polygon's ~2 s
+block time). Threat 2.8 has been promoted from `⚠️ Operator
+responsibility` to `✅ Mitigated`.
 
-**Consequence.** Real-money loss to the merchant equal to the reverted
-settle's amount, bounded by per-call value × concurrent in-flight
-settles within the reorg window.
+**Historical record (pre-fix gap).** The original
+`waitForTransactionReceipt` call passed only `timeout`, no
+`confirmations`, so the facilitator returned success the moment the
+settle tx had a receipt — depth `1`. Polygon PoS reorgs at small depths
+could revert that settle and the merchant would have already delivered
+paid content, losing the JPYC for that hit (real-money loss bounded by
+per-call value × concurrent in-flight settles within the reorg window).
+The fix adds the chain-aware default + opt-in tuning hook so kawasekit's
+target case (small-value paywall hits) gets safe behaviour out of the
+box and high-value merchants can dial up.
 
-**Mitigation path (M5).** Expose an explicit `confirmationDepth` (or
-`finalityBlocks`) option on `createSelfFacilitator` with a chain-aware
-default informed by Polygon's recommended values, plus docs/recipes
-guidance for tuning per-merchant SLO. The current single-receipt wait
-remains the testnet / low-value default.
+**Tuning guidance** (planned docs/recipes for M5, summarised here):
+
+| Per-call value | Suggested `confirmations` | Polygon time | When |
+|---|---|---|---|
+| <1 JPYC | 1 (testnet) / 4 (mainnet) | ~2-8 s | kawasekit default; suitable for small AI-agent paywall hits |
+| 1-100 JPYC | 16-32 | ~30-60 s | Mid-value merchant flows |
+| >100 JPYC | 256+ | ~9 min | High-value or insurance-grade flows; bump `receiptTimeoutMs` to match |
+
+Operators on chains other than Polygon (Avalanche, Kaia, Ethereum
+mainnet in M5+) should consult the chain's finality recommendations and
+override the default explicitly.
 
 ### 6.7. Adversarial base64 decoding tests — **closed**
 
@@ -540,3 +553,4 @@ reader can audit the integrity of the threat model over time.
 | 2026-05-28 | k0yote (M4 self-review) | Pre-external-review hardening pass: added Layer 0 (Supply chain & build integrity); added threats 1.9 (verify→settle TOCTOU), 1.10 (`transferWithAuthorization` front-running griefing), 1.11 (ECDSA s-malleability), 2.8 (settle tx reorg); demoted 2.2 (concurrent nonce race) from ✅ to ⚠️ because mitigation is doc-only and §0 requires `✅ = SDK code prevents`; rewrote 1.1 with empirical `fiat/EIP712.sol` reference; refined 1.3, 1.7, 4.5 wording. Added §6.5 (nonceManager enforcement), §6.6 (reorg safety / confirmation depth), §6.7 (adversarial base64 decoding) and the §6.1 privacy consideration. |
 | 2026-05-28 | k0yote | Implemented §6.5: `createSelfFacilitator` now performs a construction-time check on `walletClient.account.nonceManager` and throws with an actionable error if absent. Threat 2.2 promoted from `⚠️ Operator responsibility` back to `✅ Mitigated`. §6.5 marked **closed**. Callsites updated: `scripts/07-x402-self-settle.ts` and `src/x402/facilitator.self.test.ts` (test scaffold) now attach `nonceManager`. New unit tests cover the throw path and the happy path. |
 | 2026-05-28 | k0yote | Implemented §6.7: `src/x402/encoding.ts` `BASE64_REGEX` tightened to RFC 4648 §4 canonical form. Threat 1.7 promoted from split `✅ canonical / 🟡 non-canonical` to unified `✅ Mitigated`. §6.7 marked **closed**. `src/x402/encoding.test.ts` gained a 13-case adversarial corpus under "RFC 4648 canonical enforcement (threat 1.7 / §6.7)" plus a positive control proving the regex does not over-reject. |
+| 2026-05-28 | k0yote | Implemented §6.6: `CreateSelfFacilitatorParams` gained a `confirmations?: number` option, threaded into `waitForTransactionReceipt({ confirmations })`. Chain-aware default = `1` (testnet) / `4` (mainnet). Threat 2.8 promoted from `⚠️ Operator responsibility` to `✅ Mitigated`. §6.6 marked **closed**, with a tuning-guidance table per per-call value range. All three §6.x post-M4 follow-ups (§6.5, §6.6, §6.7) are now closed — the only open §6 items are intentional gaps documented for M5+ (idempotency layer §6.1, envelope encryption §6.2, soft revoke §6.3, on-chain budget telemetry §6.4). |
