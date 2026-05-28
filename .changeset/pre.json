@@ -8,6 +8,7 @@
     "observability": "0.0.0"
   },
   "changesets": [
+    "alpha-1-threat-model-hardening",
     "m2-jpyc-transfer-policy",
     "m3-x402-session-example",
     "m4-release"
