@@ -32,8 +32,7 @@ import { registerTransferCommand } from "./commands/transfer";
 // from un-built source (tsx, the cli-smoke tests) the identifier is undefined;
 // the `typeof` guard avoids a ReferenceError and falls back to a dev marker.
 declare const __KAWASEKIT_VERSION__: string;
-const CLI_VERSION =
-	typeof __KAWASEKIT_VERSION__ === "string" ? __KAWASEKIT_VERSION__ : "0.0.0-dev";
+const CLI_VERSION = typeof __KAWASEKIT_VERSION__ === "string" ? __KAWASEKIT_VERSION__ : "0.0.0-dev";
 
 const program = new Command();
 program
