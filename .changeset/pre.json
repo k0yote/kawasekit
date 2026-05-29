@@ -1,11 +1,11 @@
 {
   "mode": "pre",
-  "tag": "alpha",
+  "tag": "beta",
   "initialVersions": {
-    "kawasekit": "0.0.0",
+    "kawasekit": "0.1.0-alpha.1",
     "kawasekit-docs": "0.0.0",
-    "agent-x402-jpyc": "0.0.0",
-    "observability": "0.0.0"
+    "agent-x402-jpyc": "0.0.1-alpha.1",
+    "observability": "0.0.1-alpha.1"
   },
   "changesets": [
     "alpha-1-threat-model-hardening",
