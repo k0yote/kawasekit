@@ -222,7 +222,8 @@ the workspace's dependencies, the build pipeline that produces the
 | <a id="threat-1-6"></a>1.6 | Network / chainId mismatch silently accepted | ✅ Mitigated | M4-1 added a required `network: "mainnet" \| "testnet"` argument to both `createSelfFacilitator` and `createX402PaymentSigner`, and a runtime check throws if it disagrees with the chain identity. This catches the "testnet PK accidentally hitting mainnet RPC" failure mode at construction or sign time, before any broadcast. |
 | <a id="threat-1-7"></a>1.7 | Header smuggling / base64 malleability | ✅ Mitigated | The encoding layer (`src/x402/encoding.ts`) is byte-equivalence tested against the upstream `@x402/core` reference (`encoding.conformance.test.ts`). The decoder enforces **RFC 4648 §4 canonical base64** at the regex layer: encoded length must be a multiple of 4 and only the legal trailing forms `XX==` / `XXX=` / `XXXX` are accepted. Non-canonical inputs (overlong padding, misplaced padding, short tails, embedded whitespace / newlines / tabs, non-mod-4 lengths) are rejected upfront — `src/x402/encoding.test.ts` "RFC 4648 canonical enforcement (threat 1.7 / §6.7)" exercises 13 adversarial cases plus a positive control that proves the regex does not over-reject. This closes the cross-runtime ambiguity that would otherwise let a permissive Node `Buffer` decoder accept inputs a strict browser `atob` rejects (or vice versa). |
 | <a id="threat-1-8a"></a>1.8a | Reasoning-step duplicate payment — API surface (silent default-to-pay) | ✅ Mitigated | `wrapFetch`'s `onPayment` callback is **required at the type level** (`src/x402/fetch.ts:84` — `readonly onPayment: (...) => ...`, no `?`). Omitting it is a compile-time error, not a runtime "default to true". This forces every integrator to write a budget gate per construction site instead of silently inheriting "always pay" — closing the SDK-API-shape footgun. Type-level coverage: `src/x402/fetch.test.ts` "wrapFetch — onPayment is required at the type level" (`expectTypeOf<WrapFetchParams["onPayment"]>().not.toBeUndefined()`). Splitting this row off from the wire-format gap (1.8b) was done in 2026-05-29 follow-up F1 so the verdict matches the §0 vocabulary — the API-surface defence is genuinely "code in the SDK prevents the attack", not a known limitation. |
-| <a id="threat-1-8b"></a>1.8b | Reasoning-step duplicate payment — wire format (same intent, multiple calls) | 🟡 Known limitation | See §6.1. The x402 wire format guarantees only **call-level** idempotency via the EIP-3009 nonce. The same `fetch402` instance invoked twice for the same reasoning intent — retry, regenerate, pause-resume, multi-agent fan-out — produces two distinct nonces and two settlements. This is a property of the wire format, not of kawasekit, and cannot be closed at the SDK layer without a step-level idempotency-key protocol (tracked for M5 in §6.1). 1.8a's API-surface guard makes the operator's budget logic the place this gap surfaces. |
+| <a id="threat-1-8b"></a>1.8b | Reasoning-step duplicate payment — re-signed same intent (wire format) | ⚠️ Operator responsibility | **M5-1 ships an SDK affordance** (parallel to 1.14). A re-signed payment for the same reasoning intent (regenerate, multi-agent fan-out) produces a *fresh* random nonce by default and settles again — but supplying a reasoning-step key derives the EIP-3009 nonce deterministically (`deriveAuthorizationNonce`, `src/tokens/eip3009.ts:157`, wired via `SignX402PaymentParams.idempotencyKey` / `WrapFetchParams.idempotencyKeyFor` / `createIdempotencyKeyBuilder`), so the re-sign reuses the same nonce and the token contract's `authorizationState` rejects the duplicate on-chain ([1.2](#threat-1-2); facilitator pre-check `src/x402/facilitator.ts:544`) across uncoordinated replicas. The SDK cannot do this itself — it does not see the LLM intent (only the harness `tool.execute` boundary does), so the operator must wire the key builder; hence ⚠️, not ✅ (same shape as 1.14's `maxAmountPerSign`). The identical-re-send half is SDK-enforced ✅ — see [1.8c](#threat-1-8c). Full design: §6.1. |
+| <a id="threat-1-8c"></a>1.8c | Reasoning-step duplicate payment — identical re-send (server dedup) | ✅ Mitigated | **M5-1.** `createX402Handler`'s default-on idempotency gate (`src/x402/server.ts:565`, store `src/idempotency/store.ts:119`) deduplicates an identical re-sent / network-duplicate paid request: it runs after `verify` and before `settle`, replays the cached response for a completed key (`src/x402/server.ts:579`), and single-flights a concurrent twin — closing the duplicate-settle race in the verify→settle window (distinct from the balance TOCTOU of [1.9](#threat-1-9)). Keyed on the `Idempotency-Key` header else the EIP-3009 nonce, namespaced by `(network, payTo, asset)` for cross-tenant isolation. **Scope:** single-process or a shared store; across replicas without a shared store an identical re-send falls through to the on-chain nonce rejection (1.2) — not a double-spend, but a `402` rather than a clean replay (the in-memory default emits a one-time `KAWASEKIT_IDEMPOTENCY_001` warning). Tests: `src/x402/idempotency.test.ts`, `src/idempotency/store.test.ts`. |
 | <a id="threat-1-9"></a>1.9 | verify→settle TOCTOU (payer moves funds between verify and settle) | ⚠️ Operator responsibility | After `verify` passes the balance + nonce-not-used checks, the payer can move JPYC out of their EOA before `settle` lands; the on-chain `transferWithAuthorization` then reverts with insufficient balance. The facilitator already pays gas. This is griefing / DoS, not theft. **Recommendation**: never treat a `verify` success as "payment confirmed" — wait for the `settle` receipt (`waitForTransactionReceipt`) before delivering paid content. kawasekit's `createSelfFacilitator` does this by default. Operators wiring custom facilitators must preserve the property. |
 | <a id="threat-1-10"></a>1.10 | EIP-3009 front-running griefing (anyone can submit a `transferWithAuthorization` once they hold the signature) | ⚠️ Operator responsibility | EIP-3009 exposes two settlement entry points: `transferWithAuthorization(from, to, value, …, sig)` is permissionless (any caller, any `msg.sender`), and `receiveWithAuthorization(from, to, value, …, sig)` requires `msg.sender == to`. kawasekit's facilitator calls **`transferWithAuthorization`** (`src/x402/facilitator.ts:596`) because the facilitator EOA pays gas but is **not** the JPYC recipient — the recipient is the merchant from `paymentRequirements.payTo`. The `receive` variant would force `msg.sender == to`, which collapses the facilitator role into the merchant. So the choice is structural: front-running griefing is the cost of separating gas-payer from value-recipient. A third party who captures the signature (e.g. via threat 1.3) can broadcast it with their own gas; funds still land at the merchant `to`, but the legitimate facilitator's submission fails with "nonce already used". Mitigation is operational: TLS + minimum-latency settle paths, plus accepting that this surface exists. |
 | <a id="threat-1-11"></a>1.11 | ECDSA signature malleability (`s` vs `n−s`) | ✅ Mitigated | EIP-3009 uses ECDSA. ECDSA admits two signatures for the same message (`s` and `n−s`). Two layers prevent abuse: (a) viem's `signTypedData` produces canonical low-`s` signatures, and (b) JPYC v2's [`contracts/util/ECRecover.sol#L64`](https://github.com/jcam1/JPYCv2/blob/e06edf5ca9a69369717c24a93e6122014a55b2dd/contracts/util/ECRecover.sol#L64) (upstream ref impl `e06edf5`; logic-identical to the Polygonscan-verified deployed impl `0xafAc17FC…`) actively rejects high-`s` values (`if (uint256(s) > 0x7FFF…20A0) revert "ECRecover: invalid signature 's' value"`). Even if a malleable variant of a signature were constructed, the authorization's uniqueness is bound by the **nonce** — a re-submission with the same `from`+`nonce` reverts on `authorizationState`. No double-spend path. The canonical low-`s` form is standardised in [EIP-2](https://eips.ethereum.org/EIPS/eip-2); viem's enforcement is EIP-2-compliant, and JPYC v2's guard uses the same `n/2` threshold (`0x7FFF…20A0` ≈ secp256k1 `n/2`) — i.e. both layers reference the same canonical bound, removing any ambiguity about which half of the signature space is rejected. |
@@ -424,7 +425,7 @@ shapes what's enforceable here.
 | <a id="threat-5-2"></a>5.2 | Budget guard bypassed by direct signer access | ⚠️ Operator responsibility | If the operator's tool implementation exposes `signer.sign(…)` directly, the `onPayment` guard does not see the call. **Recommendation**: tools should only have access to `wrapFetch`, not to the underlying signer. |
 | <a id="threat-5-3"></a>5.3 | Tool input forgery (other tool feeds the paywall tool bogus params) | 🔵 Out of scope | This is a property of the agent framework's tool dispatcher (e.g. Mastra's `tools` schema validation). kawasekit cannot reach into the framework to validate. |
 | <a id="threat-5-4"></a>5.4 | Agent runtime leaks the signer PK via logs | ⚠️ Operator responsibility | kawasekit's logger module (`src/logger/`) does not log signatures or private keys. The example app does not log them either. A third-party tool or framework that logs request bodies could inadvertently capture `PAYMENT-SIGNATURE`. **Recommendation**: redact `PAYMENT-SIGNATURE` and `Authorization` headers in any HTTP logger. |
-| <a id="threat-5-5"></a>5.5 | Reasoning-step duplicate payment | 🟡 Known limitation | See §6.1 and [threat 1.8b](#threat-1-8b) for the wire-format framing of the same gap. Mitigation is **agent-side**: pair tool calls with idempotency keys at the framework layer. kawasekit cannot enforce this from the SDK boundary because the SDK does not see the reasoning graph. See [threat 1.8a](#threat-1-8a) for the SDK-side surface mitigation (`wrapFetch`'s required `onPayment` budget guard) — that closes the silent default-to-pay footgun at the API surface but does not, by itself, close the reasoning-step gap, which is why 5.5 stays 🟡. |
+| <a id="threat-5-5"></a>5.5 | Reasoning-step duplicate payment | ⚠️ Operator responsibility | See §6.1 and [1.8b](#threat-1-8b) / [1.8c](#threat-1-8c) for the wire-format framing. **M5-1** ships the harness-side affordance: `createIdempotencyKeyBuilder` (`kawasekit/idempotency`) lets the agent wrapper derive a deterministic reasoning-step key at the `tool.execute` boundary (the only place the LLM intent is visible) and thread it through `WrapFetchParams.idempotencyKeyFor` → derived nonce + server dedup. The SDK cannot enforce this from its own boundary because it does not see the reasoning graph, so the operator must wire the builder (hence ⚠️, parallel to 1.14). Identical re-sends are SDK-enforced ✅ ([1.8c](#threat-1-8c)); re-signed same-intent duplicates need the wired key ([1.8b](#threat-1-8b)). Moved 🟡 → ⚠️ in the M5-1 closure; [1.8a](#threat-1-8a)'s required `onPayment` guard remains the API-surface defence. |
 | <a id="threat-5-6"></a>5.6 | Holding the agent payer EOA PK in `.env` | ⚠️ Operator responsibility | Acceptable for local Polygon Amoy demo; **not** production posture. Production deployments should derive a session-scoped key from a hardware-backed root and keep the long-lived owner key offline. The example explicitly notes this in its `README.md`. **v0.1.0-alpha.N:** `examples/agent-x402-jpyc/` now loads PKs through `createPkProvider(uri)` (`examples/agent-x402-jpyc/lib/pk-provider.ts`) — the URI scheme (`env://` for demo, `kms://` for production) is the integrator's first decision, and the demo provider emits a loud `console.warn` at construction so the posture is visible in every run. The `kms://` branch intentionally throws today because kawasekit does not bundle a KMS adapter (key custody is operator territory). The point of the abstraction is to stop new integrators from copy-pasting a bare `process.env.PRIVATE_KEY` read as a "this is fine" pattern. |
 
 ### Where the mitigations live
@@ -442,81 +443,88 @@ These are gaps that kawasekit acknowledges and chooses **not** to close in the
 0.1.0 release. Each entry records the gap, the consequence, and the planned
 mitigation path.
 
-### 6.1. Reasoning-step idempotency gap
+### 6.1. Reasoning-step idempotency gap — **closed (layered)**
 
-**Gap.** kawasekit and the x402 v2 specification guarantee idempotency at three
-levels:
+**Status.** Closed in `v0.1.0-beta.N` (M5-1). The SDK now ships a reasoning-step
+idempotency layer (`kawasekit/idempotency`); every duplicate-payment scenario
+below is prevented by SDK-shipped mechanism plus the on-chain backstop. Per §0's
+single-verdict discipline the closure is **layered**, not one `✅`: the
+SDK-enforced, no-cooperation half is a new `✅` ([threat 1.8c](#threat-1-8c)); the
+half that needs the agent harness to supply a key is `⚠️ Operator responsibility
+(with SDK affordance)` ([1.8b](#threat-1-8b) / [5.5](#threat-5-5)), exactly
+parallel to [1.14](#threat-1-14). This satisfies the `0.1.0` GA fund-correctness
+gate (the gate is *gap closure via shipped mechanism + backstop*, as for 1.14 —
+not a bare `✅`). The four-layer model (the prose previously read "three levels"
+against a four-row table — corrected) now reads:
 
 | Layer | Unit | Status |
 |---|---|---|
-| EIP-3009 nonce | One signed authorization | ✅ 32-byte random, replay-safe at the token contract |
-| `viem.nonceManager` | One blockchain tx | ✅ Required in `createSelfFacilitator` JSDoc, used in M3-3 example |
-| HTTP `Idempotency-Key` | One HTTP request | ❌ **Not implemented** |
-| Agent reasoning step | One LLM intent (tool call) | ❌ **Not implemented** |
+| EIP-3009 nonce | One signed authorization | ✅ 32-byte random **or key-derived**, replay-safe at the token contract |
+| `viem.nonceManager` | One blockchain tx | ✅ Enforced at `createSelfFacilitator` construction (§6.5) |
+| HTTP `Idempotency-Key` | One HTTP request | ✅ Server dedup gate + response replay (`src/x402/server.ts:565`, default-on) |
+| Agent reasoning step | One LLM intent (tool call) | ⚠️ SDK affordance — harness supplies the key (`createIdempotencyKeyBuilder`); operator must wire it |
 
-The bottom two layers are absent, which leaves a class of duplicate-payment
-scenarios uncovered:
+**What shipped (M5-1).** Two independent halves over three defense-in-depth
+layers (design: `docs/rfc/m5-1-reasoning-step-idempotency.md`):
 
-1. **Transient-failure retry**: client times out, retries; both calls succeed
-   → one intent, two payments.
-2. **LLM regeneration**: user clicks "Regenerate" in the UI; the same tool call
-   fires twice → two payments for one intended action.
-3. **Pause-resume**: a conversation pauses and resumes; the agent re-decides
-   that the data needs to be fetched again.
-4. **Multi-agent fan-out**: two agents independently fetch the same data
-   without coordination.
-5. **Network duplicate**: client auto-retries on transient failure; the server
-   already settled the prior attempt.
+- **Half A — server-enforced at-most-once (default-on; SDK code → 1.8c `✅`).**
+  `createX402Handler` deduplicates re-sent / concurrent paid requests via an
+  injected store (`CreateX402HandlerParams.idempotency`, default
+  `createInMemoryIdempotencyStore`, `src/idempotency/store.ts:119`). The gate
+  runs *after* `verify` and *before* `settle` (`src/x402/server.ts:565`): a
+  completed key replays the cached response (`src/x402/server.ts:579`,
+  `Idempotency-Replayed: true`); a concurrent twin holding the lease is
+  rejected/awaited (closing the verify→settle TOCTOU). Keyed on the
+  `Idempotency-Key` header when present, else the EIP-3009 nonce, namespaced by
+  `(network, payTo, asset)` for cross-tenant isolation. Covers scenarios 1 / 3 /
+  5 with no harness cooperation. Tests: `src/x402/idempotency.test.ts`,
+  `src/idempotency/store.test.ts`.
+- **Half B — client-opt-in derived nonce (on-chain backstop → 1.8b affordance).**
+  `deriveAuthorizationNonce` (`src/tokens/eip3009.ts:157`) derives the EIP-3009
+  nonce deterministically from a reasoning-step key (no shared secret; `chainId`
+  in the preimage for cross-chain safety), wired via
+  `SignX402PaymentParams.idempotencyKey` / `WrapFetchParams.idempotencyKeyFor`.
+  A re-signed same-intent payment then reuses the same nonce, and the token
+  contract's `authorizationState` rejects the second settlement on-chain
+  ([threat 1.2](#threat-1-2); facilitator pre-check at
+  `src/x402/facilitator.ts:544`) across any number of uncoordinated replicas.
+  Covers scenarios 2 / 4 **when the harness wires the key** — hence ⚠️, not `✅`.
+- **Layer 3 — shared store (Redis/SQL adapter, optional).** Lifts Half A's
+  response replay from single-process to cross-replica. The in-memory default is
+  single-process and emits a one-time `KAWASEKIT_IDEMPOTENCY_001` warning;
+  fund-correctness never depends on it (Half B's on-chain nonce is the backstop),
+  so a cold / missing store degrades replay, not safety.
 
-**Consequence.** Duplicate payments are real money. On Polygon mainnet with
-JPYC, a duplicate is a duplicate transfer of JPY — not a security hole in the
-classical CIA sense, but a **correctness** failure that erodes trust in the
-SDK at the integration boundary.
+**Scope of the `✅` (1.8c).** SDK-enforced at-most-once + response replay holds
+**single-process, or with a shared store**. Across replicas without a shared
+store a duplicate identical re-send falls through to the on-chain nonce
+rejection (1.2) — not a double-spend, but a `402` rather than a clean replay.
 
-**Mitigation path (M5).** A reasoning-step idempotency layer is captured as a
-candidate for the M5 milestone (see `.claude/m5-features-candidates.md`,
-Candidate 1). The proposed direction follows Stripe's `Idempotency-Key`
-header model extended to the x402 wire format:
+**Privacy (resolved).** The Round-2 tension (intent-derived key → server-side
+linkability) is resolved by keeping the secret **off the fund path**: the derived
+nonce is `keccak256(key ‖ scope)` with no secret (opaque to any external chain
+observer who does not know the app-internal `conversationId` / `stepId`), and the
+optional `clientSecret` hardens **only** the wire `Idempotency-Key` header
+(unforgeability + no cross-client correlation). The irreducible residual — a
+server can see *that* a client repeated reasoning-step N, never *what* it was — is
+the minimum any dedup scheme exposes; a client preferring maximum unlinkability
+omits the key and falls back to today's random-nonce behaviour. See the RFC §7.
 
-1. The agent derives a deterministic idempotency key per reasoning step
-   (e.g. `${conversationId}:${toolCallId}`).
-2. The key propagates through the SDK to the HTTP header.
-3. The facilitator deduplicates against a TTL store (24h default).
-4. Optionally, the EIP-3009 nonce is itself derived from the idempotency key
-   so the on-chain contract becomes the last line of defence.
-
-External feedback that surfaced this gap (Twitter, 2026-05-26) suggested an
-extension proposal to the upstream x402 spec; that pathway is open and being
-evaluated alongside the in-SDK implementation.
-
-**Operator mitigation today.** Until M5 lands:
-
-- **`wrapFetch`'s `onPayment` callback is required at the type level
-  (v0.1.0-alpha.N).** Omitting it is a compile-time error
-  (`src/x402/fetch.ts:84` — `readonly onPayment: (...) => ...`, no `?`).
-  This eliminates the "I forgot to wire a budget guard and silently defaulted
-  to always-pay" failure mode — every integrator must write the guard or
-  explicitly return `() => true`.
-- Implement idempotency keys at the agent framework layer (Mastra tool wrappers,
-  LangChain callbacks, Vercel AI SDK middleware) — `onPayment` does not see
-  reasoning-step identifiers, only the wire-format `paymentRequirements`.
-- Cap the `onPayment` budget guard tightly so duplicate payments hit a hard
-  ceiling (the canonical pattern in the `wrapFetch` JSDoc and `README.md`
-  Quick Start).
-- Treat duplicate payment as a known-quantity refund scenario in the
-  business logic, not as a fatal incident.
-
-**Privacy consideration (M5 design).** The Round 2 external feedback proposed
-deriving the idempotency key from the agent's reasoning step
-(`hash(intent_text_normalized || step_idx || optional_context)`). Shipping
-such a key over HTTP gives the server a stable identifier per user intent —
-linkability across calls becomes available to the merchant / facilitator
-even when each individual call would otherwise be unlinkable. Idempotency
-and privacy are in tension here. The M5 design must explicitly decide
-whether the key is intent-derived (better idempotency, worse linkability)
-or opaque-random per call (worse idempotency, better privacy), or hybrid
-(intent-derived locally, opaque on the wire with a server-side lookup
-table). This is a recorded open question, not a settled answer.
+**Historical record (pre-fix gap).** Before M5-1 the bottom two idempotency
+layers were absent (the HTTP `Idempotency-Key` and agent-reasoning-step rows read
+❌), leaving a class of duplicate-payment scenarios uncovered: (1)
+transient-failure retry — client times out, retries, both succeed; (2) LLM
+"Regenerate" — the same tool call fires twice; (3) pause-resume — the agent
+re-decides to fetch; (4) multi-agent fan-out — two agents fetch the same data
+without coordination; (5) network duplicate — client auto-retries after the
+server already settled. The consequence was a **correctness** failure (a
+duplicate JPYC transfer), not a classical CIA breach, but one that erodes trust
+at the integration boundary. The gap surfaced from public feedback (Twitter,
+2026-05-26), including a Round-2 refinement that the harness boundary is the
+thinnest idempotency layer — which drove the "normalizer authority, not
+propagator" design. Interim operator mitigations were: `wrapFetch`'s required
+`onPayment` budget guard (1.8a), framework-layer idempotency keys, a tight
+`onPayment` ceiling, and treating duplicates as a refund scenario.
 
 ### 6.2. Session-envelope encryption
 
@@ -786,3 +794,4 @@ reader can audit the integrity of the threat model over time.
 | 2026-05-29 | k0yote | Closed source-verification review (`THREAT_MODEL_REVIEW_2026-05-29-source-verification.md`) **Sprint 1: H1-A / L1 / L2 / L3** (doc-only; no verdict downgrades). **H1-A**: added Layer 1 threat **1.14 "Server-advertised amount inflation"** (⚠️ Operator responsibility) — the source-verification pass confirmed `createX402PaymentSigner(...).sign()` bounds the requested `amount` only by `uint256` shape (no ceiling / no `maxAmount`), that the public direct-signer path bypasses the `wrapFetch` `onPayment` guard (cross-ref 5.2), and crucially that the **EOA-payer x402 path is NOT bounded by the Layer-4 session-key daily-limit**; a `maxAmountPerSign` affordance is forward-noted for M5 (H1 Part B). **L1**: corrected citation line drift — 1.8a `src/x402/fetch.ts:76`→`:84` and §6.1's matching reference, 1.10 `src/x402/facilitator.ts:556`→`:596`; all other `file:line` citations (`fiat/EIP712.sol:43`, `fiat/EIP712Domain.sol:54`, `fiat/ECRecover.sol:58`, `src/account/session-key.ts:90`) re-verified exact; §0 gained a "line citations are best-effort" note. Historical Appendix A rows preserve their as-recorded line numbers (audit hygiene — past revisions are not retroactively edited). **L2**: threat 2.8 (settle reorg, ✅) now names its out-of-scope dependency on Layer 2 RPC honesty, applying the C2 citation discipline uniformly (matching 1.1 / 4.2 / 4.7). **L3**: Layer 4 trust assumptions gained an explicit bundler good-faith assumption, symmetric to Layer 2's RPC-honesty assumption (cross-ref 2.9 / 3.4). Deferred to later sprints: **H2** (make the gitignored `fiat/` citations independently resolvable — before M5 human review) and **H1-B** (the `maxAmountPerSign` code affordance — M5). |
 | 2026-05-29 | k0yote | Closed source-verification review **Sprint 2: H2** (gitignored `fiat/` citations made independently resolvable; verdicts unchanged). The `✅` citations in 1.1 / 1.11 / 4.7 previously pointed at `fiat/...:line`, but `git ls-files fiat/` is empty (`.gitignore:45`, license / repo-separation) — a fresh-clone reviewer could not open them. Established the JPYC v2 contract provenance: the deployed 電子決済手段 version is a proxy (`0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29`) → implementation (`0xafAc17FC3936A29ca2d2787ceD3C5D1C52007d2e`, **verified on Polygonscan**, `pragma 0.8.30`); the 0.8.30 source is **not** in the public upstream repo, so Polygonscan is the only public location of the deployed source. The upstream reference impl `jcam1/JPYCv2` (pinned commit `e06edf5`, 2022, `pragma 0.8.11`) is logic-identical for every cited line (verified by fetching the upstream files: `chainid := chainid()` at `util/EIP712.sol#L47`, fork guard at `v1/EIP712Domain.sol#L54`, high-`s` reject at `util/ECRecover.sol#L64`, bare `ecrecover` at `util/ECRecover.sol#L75`, `EIP712.recover(...) == from` at `v1/EIP3009.sol#L123`). Added a Layer 1 "JPYC v2 contract provenance" note enumerating the three source forms, and repointed 1.1 / 1.11 / 4.7 at commit-pinned upstream permalinks + the Polygonscan-verified deployed implementation. Sourcify has no match for the address (checked); Polygonscan is the verification authority. Remaining deferred item: **H1-B** (`maxAmountPerSign` code affordance — M5). |
 | 2026-05-29 | k0yote | Reframed the `0.1.0` GA gate from "external human formal review" to an **open-channel + gap-closure** basis. Rationale: AI-assisted review (the two `web3-cto-review` passes here) already covers systematic coverage / vocabulary consistency / empirical source verification well; for a solo, pre-adoption, build-in-public OSS library the higher-leverage independent-review mechanism is the **public channel itself** (GitHub issues + this threat model + `SECURITY.md`) — which has already produced a material finding (§6.1 came from public feedback on an earlier article). The `0.1.0` GA criteria are therefore: (1) close the fund-correctness gaps — §6.1 reasoning-step idempotency (or GA explicitly scoped to small-per-call-value with the limit front-loaded) **and** the `maxAmountPerSign` amount ceiling (threat 1.14 / H1-B); (2) a clean beta soak with no material issues; (3) the open review channel kept live. A formal third-party human audit is downgraded to a **goal on the road to `1.0`** (and a recommended step before endorsing production-money-at-scale), **not** a hard `0.1.0` GA blocker. §0 Methodology updated to match. This row supersedes the earlier "before M5 human review" framing in the F-series / Sprint rows above (those are preserved as-recorded per audit hygiene). |
+| 2026-05-30 | k0yote | Closed **§6.1 reasoning-step idempotency** (M5-1) — one of the two named `0.1.0` GA fund-correctness gates. Shipped the `kawasekit/idempotency` layer (key authority + injectable store + in-memory bounded-LRU lease store), `deriveAuthorizationNonce` (`src/tokens/eip3009.ts:157`), and the wire-up (`SignX402PaymentParams.idempotencyKey`, `WrapFetchParams.idempotencyKeyFor`, `CreateX402HandlerParams.idempotency` — default-on server dedup gate at `src/x402/server.ts:565` with response replay). §6.1 marked **closed (layered)**, fixing the "three levels"→"four levels" prose bug. **Verdict changes:** added new **1.8c "identical re-send (server dedup)" `✅ Mitigated`** (SDK-enforced, single-process / shared-store scope cited); **1.8b** reframed to "re-signed same intent" and **5.5** both moved `🟡 → ⚠️ Operator responsibility (with SDK affordance)` — parallel to 1.14, since the SDK ships the mechanism but cannot see the LLM intent (the harness must wire `createIdempotencyKeyBuilder`). Following §0 single-verdict discipline + the 1.8a/1.8b F1 split precedent, **no bare `✅` is claimed on 1.8b** (the original M5-1 RFC draft over-claimed it; corrected by the `web3-cto-review` C1 finding). The privacy open question is resolved (no-secret nonce keeps the secret off the fund path; optional HMAC hardens only the wire header). 45 new tests (296 total); typecheck + lint + vitest + build green. Design + review: `docs/rfc/m5-1-reasoning-step-idempotency.md`. |
