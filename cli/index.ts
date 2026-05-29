@@ -22,13 +22,18 @@ import { registerInitCommand } from "./commands/init";
 import { registerPolicyCommand } from "./commands/policy";
 import { registerSessionKeyCommand } from "./commands/session-key";
 import { registerTransferCommand } from "./commands/transfer";
-import { ensureDotenvLoaded } from "./lib/env";
 
-// Replaced at build time by tsup's `define` (see tsup.config.ts) with the
-// literal package.json version. Declared here so `tsc --noEmit` typechecks.
+// `.env` is loaded lazily by resolveValue / requireValue (cli/lib/env.ts),
+// only when a command actually reads a value — so `--version` / `--help`
+// never touch the filesystem or the environment.
+//
+// __KAWASEKIT_VERSION__ is replaced at build time by tsup's `define` (see
+// tsup.config.ts) with the literal package.json version. When the CLI runs
+// from un-built source (tsx, the cli-smoke tests) the identifier is undefined;
+// the `typeof` guard avoids a ReferenceError and falls back to a dev marker.
 declare const __KAWASEKIT_VERSION__: string;
-
-ensureDotenvLoaded();
+const CLI_VERSION =
+	typeof __KAWASEKIT_VERSION__ === "string" ? __KAWASEKIT_VERSION__ : "0.0.0-dev";
 
 const program = new Command();
 program
@@ -36,7 +41,7 @@ program
 	.description(
 		"kawasekit — CLI for the kawasekit SDK (AI-agent stablecoin payments, Japan-first, JPYC-native).",
 	)
-	.version(__KAWASEKIT_VERSION__);
+	.version(CLI_VERSION);
 
 registerInitCommand(program);
 registerAccountCommand(program);
