@@ -18,7 +18,10 @@ let dotenvLoaded = false;
  */
 export function ensureDotenvLoaded(): void {
 	if (dotenvLoaded) return;
-	loadDotenv({ override: false });
+	// `quiet: true` suppresses dotenv v17's promotional "injecting env … (tip:
+	// …)" banner — a CLI loading secrets should not print to stdout, and it
+	// otherwise leaks onto `--version` / `--help` output.
+	loadDotenv({ override: false, quiet: true });
 	dotenvLoaded = true;
 }
 
