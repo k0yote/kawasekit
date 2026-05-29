@@ -9,6 +9,7 @@
   },
   "changesets": [
     "alpha-1-threat-model-hardening",
+    "beta-0-review-closures",
     "m2-jpyc-transfer-policy",
     "m3-x402-session-example",
     "m4-release"
