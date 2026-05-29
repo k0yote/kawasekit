@@ -53,6 +53,9 @@ M4 is complete — `kawasekit@0.1.0-beta.2` is published on npm
 (`pnpm add kawasekit@beta`, with SLSA provenance) and mainnet-capable. It is
 **not yet GA**: production use is constrained to small per-call values until
 the reasoning-step idempotency gap (THREAT_MODEL §6.1) is closed. GA
-(`0.1.0` on the `latest` tag) lands in M5. See the [GitHub
+(`0.1.0` on the `latest` tag) is gated on closing that gap plus a
+`maxAmountPerSign` ceiling and a clean beta soak — reviewed continuously in
+the open (a formal third-party audit is a road-to-`1.0` goal, not a GA
+blocker). See the [GitHub
 project](https://github.com/k0yote/kawasekit) for current progress and the
 [security policy](/reference/security/) for how to report issues.
