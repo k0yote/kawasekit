@@ -5,7 +5,11 @@
 [![npm version](https://img.shields.io/npm/v/kawasekit.svg)](https://www.npmjs.com/package/kawasekit)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-🚧 **Status**: Pre-alpha (M3 milestone — externally-callable kawasekit). Built in public. Not yet ready for production use.
+🚧 **Status**: M4 complete — `kawasekit@0.1.0-beta.2` is published on npm (SLSA provenance, `beta` dist-tag) and mainnet-capable, with payment flows verified on Polygon mainnet. **Not yet GA.** Production use is currently constrained to **small per-call values**: the reasoning-step idempotency gap (see [`docs/THREAT_MODEL.md` §6.1](./docs/THREAT_MODEL.md#61-reasoning-step-idempotency-gap)) is not yet closed, so duplicate-payment scenarios are the integrator's responsibility. GA (`0.1.0` on the `latest` tag) lands in M5 after the idempotency layer + an external human security review. Built in public.
+
+```bash
+pnpm add kawasekit@beta   # 0.1.0-beta.2 — pre-GA, mainnet-capable
+```
 
 ## Vision
 
@@ -19,9 +23,9 @@ Built around modern account abstraction (ERC-4337 / Kernel v3.1) and Japan's fir
 
 - [x] **M1**: Smart account skeleton on Polygon Amoy
 - [x] **M2**: JPYC transfer via UserOp + EIP-3009 signing helpers + Daily Limit spending policy
-- [x] **M3**: x402 v2 server/client/facilitator + session-key lifecycle + Mastra/Hono integration example (this release)
-- [ ] **M4**: Mainnet support + observability + npm v0.1 release + CLI + docs site
-- [ ] **M5**: Community building + first real integrations
+- [x] **M3**: x402 v2 server/client/facilitator + session-key lifecycle + Mastra/Hono integration example
+- [x] **M4**: Polygon mainnet support + observability (Prometheus / OTLP) + CLI + docs site + npm `0.1.0-alpha`/`0.1.0-beta` release
+- [ ] **M5**: Reasoning-step idempotency layer (§6.1) + `0.1.0` GA promote + Kaia support — the technical prerequisites for first real integrations
 - [ ] **M6**: Managed service alpha + Rust policy engine
 
 ## Quick Start
@@ -63,6 +67,28 @@ The agent picks tool calls via Claude Sonnet, each `fetch_weather` invocation
 pays 0.001 JPYC, and the summary prints Polygonscan tx URLs for every
 settlement. See the [example README](./examples/agent-x402-jpyc/README.md)
 for the full walkthrough.
+
+### CLI (M4-4)
+
+Installing the package exposes a `kawasekit` binary (`npx kawasekit <cmd>`, or
+`pnpm exec kawasekit` in a workspace):
+
+```bash
+pnpm add kawasekit@beta
+
+npx kawasekit init                              # scaffold .env + required vars
+npx kawasekit account create --chain polygonAmoy   # deploy a Kernel smart account
+npx kawasekit policy create  --chain polygonAmoy   # build a Daily Limit policy
+npx kawasekit transfer       --chain polygonAmoy   # send JPYC via a sponsored UserOp
+npx kawasekit session-key issue   --chain polygonAmoy   # issue a session key + envelope
+npx kawasekit session-key restore --chain polygonAmoy
+npx kawasekit session-key revoke  --chain polygonAmoy
+npx kawasekit session-key rotate  --chain polygonAmoy
+```
+
+Every on-chain command takes `--chain "polygon" | "polygonAmoy"`. Mainnet
+(`--chain polygon`) additionally requires `KAWASEKIT_ALLOW_MAINNET=1` in the
+environment as a safety guard against accidental real-funds broadcasts.
 
 ### Programmatic use (M2)
 
@@ -147,7 +173,9 @@ const app = new Hono();
 app.use(
   "/weather/*",
   x402Middleware({
-    facilitator: createSelfFacilitator({ walletClient, publicClient }),
+    // `network` is required (M4-1): it is cross-checked against
+    // walletClient.chain.isTestnet and throws on mismatch.
+    facilitator: createSelfFacilitator({ network: "testnet", walletClient, publicClient }),
     requirementsFor: () => [
       buildPaymentRequirements({
         chainId: polygonAmoy.id,
@@ -164,7 +192,8 @@ app.get("/weather/:city", (c) => c.json({ city: c.req.param("city"), weather: "s
 Client (any `fetch` becomes x402-aware):
 
 ```typescript
-import { createX402PaymentSigner, wrapFetch } from "kawasekit";
+import { createX402PaymentSigner, JPYC_DECIMALS, wrapFetch } from "kawasekit";
+import { parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const signer = createX402PaymentSigner({
@@ -178,7 +207,7 @@ const signer = createX402PaymentSigner({
 // onPayment is *required* at the type level — kawasekit refuses to default
 // to "always pay" silently. The callback is your budget guard.
 let spent = 0n;
-const MAX_SPEND = 100_000n; // 100 JPYC (6 decimals)
+const MAX_SPEND = parseUnits("100", JPYC_DECIMALS); // 100 JPYC (JPYC has 18 decimals)
 const fetch402 = wrapFetch({
   signer,
   onPayment: (req) => {
@@ -234,13 +263,21 @@ const restored = await restoreSessionAccount({
 
 ## Supported Chains
 
-| Chain | Status | JPYC |
+JPYC availability and kawasekit support are **two separate axes** — JPYC being
+live on a chain does **not** mean kawasekit has a config or has been tested
+there. Today kawasekit ships a chain config only for **Polygon + Polygon Amoy**
+(`src/chains/`); `getJpycAddress` / `SupportedChainId` accept only those two.
+
+| Chain | JPYC availability | kawasekit support |
 |---|---|---|
-| Polygon | M2 | ✅ Live (`0xE7C3...c29`) |
-| Polygon Amoy (testnet) | M2 (primary dev target) | ✅ Live (`0xE7C3...c29`, mint-controlled) |
-| Kaia | M3+ | 🚧 In development |
-| Avalanche | M4+ | ✅ Live (`0xE7C3...c29`) |
-| Ethereum | M4+ | ✅ Live (`0xE7C3...c29`) |
+| Polygon (mainnet) | ✅ Live (`0xE7C3…c29`) | ✅ M4 — config shipped, verified with live mainnet txs |
+| Polygon Amoy (testnet) | ✅ Live (`0xE7C3…c29`) | ✅ primary testnet target |
+| Kaia | ✅ Live (`0xE7C3…c29`, same address)¹ | 🚧 planned M5 (x402 EOA-payer path first) |
+| Avalanche | ✅ Live (`0xE7C3…c29`) | ⬜ not yet — no chain config |
+| Ethereum | ✅ Live (`0xE7C3…c29`) | ⬜ not yet — no chain config |
+
+¹ Kaia JPYC status per recent JPYC deployment info (verifiable on KaiaScan).
+kawasekit has no Kaia config yet; support is scheduled for M5.
 
 ## Why Japan-first
 
@@ -265,11 +302,11 @@ pnpm install
 pnpm dev
 ```
 
-The site will deploy to GitHub Pages on every push to `main` once Pages is enabled in the repository settings — see `.github/workflows/docs.yml`. The planned canonical URL is `kawasekit.k0yote.dev`.
+The site is live at **[kawasekit.k0yote.dev](https://kawasekit.k0yote.dev)**, auto-deployed from `main` via `.github/workflows/docs.yml`.
 
 ## Contributing
 
-This is currently a solo project, but contributions will be welcomed once we hit M3. See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for guidelines.
+This is currently a solo project, but with M1–M4 shipped and `0.1.0-beta` on npm, contributions are now welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for guidelines.
 
 For now, feedback, issues, and discussions are the most valuable contributions.
 
@@ -287,4 +324,4 @@ This license includes an explicit patent grant, which is important for working i
 
 ---
 
-Follow development progress: [@k0yote](https://github.com/k0yote) · Project home: kawasekit.k0yote.dev (coming soon)
+Follow development progress: [@k0yote](https://github.com/k0yote) · Project home: [kawasekit.k0yote.dev](https://kawasekit.k0yote.dev)
