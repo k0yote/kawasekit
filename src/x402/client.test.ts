@@ -547,3 +547,66 @@ describe("createX402PaymentSigner — resource echo", () => {
 		expect("resource" in payload).toBe(false);
 	});
 });
+
+describe("createX402PaymentSigner — maxAmountPerSign (threat 1.14)", () => {
+	// JPYC_REQ.amount is 10 JPYC (18 decimals) = 10 * 10^18.
+	const TEN_JPYC = 10_000_000_000_000_000_000n;
+
+	it("signs when the amount is exactly at the ceiling (equal is allowed)", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account,
+			asset: { kind: "known", id: "jpyc-v2" },
+			maxAmountPerSign: TEN_JPYC,
+		});
+		await expect(signer.sign({ paymentRequirements: JPYC_REQ })).resolves.toBeDefined();
+	});
+
+	it("signs when the amount is under the ceiling", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account,
+			asset: { kind: "known", id: "jpyc-v2" },
+			maxAmountPerSign: TEN_JPYC * 2n,
+		});
+		await expect(signer.sign({ paymentRequirements: JPYC_REQ })).resolves.toBeDefined();
+	});
+
+	it("throws X402InvalidPayloadError when the amount exceeds the ceiling", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account,
+			asset: { kind: "known", id: "jpyc-v2" },
+			maxAmountPerSign: TEN_JPYC - 1n,
+		});
+		await expect(signer.sign({ paymentRequirements: JPYC_REQ })).rejects.toBeInstanceOf(
+			X402InvalidPayloadError,
+		);
+	});
+
+	it("applies no ceiling when maxAmountPerSign is unset (backward-compatible default)", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account,
+			asset: { kind: "known", id: "jpyc-v2" },
+		});
+		const huge: X402PaymentRequirements = {
+			...JPYC_REQ,
+			amount: (TEN_JPYC * 1_000_000n).toString(),
+		};
+		await expect(signer.sign({ paymentRequirements: huge })).resolves.toBeDefined();
+	});
+
+	it("rejects a non-positive ceiling at construction", () => {
+		for (const bad of [0n, -1n]) {
+			expect(() =>
+				createX402PaymentSigner({
+					network: "testnet",
+					account,
+					asset: { kind: "known", id: "jpyc-v2" },
+					maxAmountPerSign: bad,
+				}),
+			).toThrow(X402InvalidPayloadError);
+		}
+	});
+});

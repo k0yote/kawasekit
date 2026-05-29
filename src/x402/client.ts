@@ -132,6 +132,20 @@ export interface CreateX402PaymentSignerParams {
 	 * Defaults to {@link X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS}.
 	 */
 	readonly defaultLifetimeSeconds?: number;
+	/**
+	 * Optional per-signature value ceiling, in the asset's smallest unit
+	 * (`bigint`). When set, `sign()` throws {@link X402InvalidPayloadError} if a
+	 * server advertises `requirements.amount` greater than this — refusing to
+	 * sign an over-budget payment at the primitive.
+	 *
+	 * **Threat 1.14 mitigation.** {@link createX402PaymentSigner} is a public API
+	 * and the direct-signer path bypasses the `wrapFetch` `onPayment` guard; the
+	 * EOA-payer x402 flow is also not bounded by the Layer-4 session-key daily
+	 * limit. This pins the *amount* ceiling the way {@link X402AssetParam} pins
+	 * the *asset* (1.4) — production posture is to set it. Omit it for no ceiling
+	 * (backward-compatible default; the payer EOA balance is the only bound).
+	 */
+	readonly maxAmountPerSign?: bigint;
 }
 
 /** Parameters for {@link X402PaymentSigner.sign}. */
@@ -332,6 +346,13 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 			`\`defaultLifetimeSeconds\` must be positive, got ${defaultLifetimeSeconds}`,
 		);
 	}
+	const maxAmountPerSign = params.maxAmountPerSign;
+	if (maxAmountPerSign !== undefined && maxAmountPerSign <= 0n) {
+		throw new X402InvalidPayloadError(
+			"X402PaymentSignerConfig",
+			`\`maxAmountPerSign\` must be a positive bigint, got ${maxAmountPerSign}`,
+		);
+	}
 	const pinnedDomain = resolveAssetParam(params.asset);
 
 	return {
@@ -356,6 +377,12 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 				throw new X402InvalidPayloadError(
 					"PaymentRequirements",
 					`requirements.asset (${getAddress(asset)}) does not match the signer's pinned verifyingContract (${pinnedDomain.verifyingContract}) — refusing to sign for an asset the signer was not configured to handle`,
+				);
+			}
+			if (maxAmountPerSign !== undefined && value > maxAmountPerSign) {
+				throw new X402InvalidPayloadError(
+					"PaymentRequirements",
+					`requirements.amount (${value}) exceeds the signer's \`maxAmountPerSign\` ceiling (${maxAmountPerSign}) — refusing to sign a payment above the configured per-signature limit (threat 1.14)`,
 				);
 			}
 
