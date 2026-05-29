@@ -36,7 +36,7 @@ end users never see gas, mnemonics, or chains.
 | Priority | Chain | Status | JPYC |
 |---|---|---|---|
 | 1 | Polygon (mainnet + Amoy testnet) | Live, primary target | ✅ Live |
-| 2 | Kaia | Coming when JPYC launches there | 🚧 In development |
+| 2 | Kaia | kawasekit support planned (M5) | ✅ Live (2026-05) |
 | 3 | Avalanche | Future | ✅ Live |
 | 4 | Ethereum mainnet | Future (institutional use cases) | ✅ Live |
 
@@ -48,8 +48,8 @@ Do NOT add chains beyond this list without discussion.
 - Japanese yen-pegged stablecoin
 - Legally classified as 電子決済手段 (electronic payment instrument) under 改正資金決済法 (revised Payment Services Act)
 - Issued by JPYC Inc., a registered Type II Fund Transfer Service Provider
-- Live chains (as of 2026-05): Ethereum, Polygon (mainnet + Amoy testnet), Avalanche
-- Kaia support: in active development (Q2-Q3 2026)
+- Live chains (as of 2026-05): Ethereum, Polygon (mainnet + Amoy testnet), Avalanche, Kaia
+- Kaia: JPYC officially launched on Kaia (2026-05, Kaia DLT Foundation announcement; Unifi began JPYC support 2026-05-22). Same contract address as the other chains. kawasekit's Kaia chain config (`src/chains/`) is NOT yet implemented — planned for M5 (x402 EOA-payer path first).
 - 1 JPYC = 1 JPY (always)
 - Supports EIP-3009 (transferWithAuthorization) for gasless transfers
 - **EIP-3009 implementation does NOT support ERC-1271 (contract signatures)** — `transferWithAuthorization` uses pure `ecrecover` and requires `from` to be an EOA. Smart-account-held JPYC must be transferred via `JPYC.transfer()` in a UserOp (gasless via Paymaster, policy-enforced via Validator). EIP-3009 is for EOA-payer flows (x402, pull-payment), NOT for agent-account transfers.

@@ -276,16 +276,17 @@ there. Today kawasekit ships a chain config only for **Polygon + Polygon Amoy**
 | Avalanche | ✅ Live (`0xE7C3…c29`) | ⬜ not yet — no chain config |
 | Ethereum | ✅ Live (`0xE7C3…c29`) | ⬜ not yet — no chain config |
 
-¹ Kaia JPYC status per recent JPYC deployment info (verifiable on KaiaScan).
-kawasekit has no Kaia config yet; support is scheduled for M5.
+¹ JPYC officially launched on Kaia in 2026-05 (Kaia DLT Foundation; Unifi began
+JPYC support 2026-05-22), same contract address as the other chains. kawasekit
+has no Kaia chain config yet — support is scheduled for M5.
 
 ## Why Japan-first
 
 The Japanese stablecoin ecosystem in 2026 is uniquely positioned:
 
 - **JPYC** is a fully regulated yen-pegged stablecoin under the revised Payment Services Act
-- Multi-chain by design (same address on Ethereum, Polygon, Avalanche)
-- Kaia integration coming via LINE NEXT's Unifi
+- Multi-chain by design (same address on Ethereum, Polygon, Avalanche, and Kaia)
+- Now live on Kaia (2026-05), with LINE NEXT's Unifi supporting JPYC since 2026-05-22
 - Japanese AI startup ecosystem actively seeking modern payment rails
 
 kawasekit aims to be the developer-facing layer that connects this stablecoin infrastructure to the global AI agent ecosystem.
