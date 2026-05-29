@@ -2,7 +2,7 @@
 "kawasekit": patch
 ---
 
-# 0.1.0-beta.0 — external-review + source-verification closures
+# External-review + source-verification closures (beta line)
 
 Promotes the alpha line to beta after closing a full CTO-class review of
 `docs/THREAT_MODEL.md` (19 findings + 5 follow-ups) and a second,
@@ -76,6 +76,9 @@ Appendix A.
 
 ## Publish
 
-Publishes as `kawasekit@0.1.0-beta.0` under the `beta` dist-tag. The `0.0.1`
-placeholder remains on the `latest` tag until v0.1.0 GA (planned for M5 after
-the external human formal review).
+Publishes under the `beta` dist-tag (`pnpm add kawasekit@beta`). The
+prerelease counter is monotonic across the pre-release window and does not
+reset on the alpha→beta tag change, so this lands as `0.1.0-beta.2`
+(continuing alpha.0 / alpha.1). The `0.0.1` placeholder remains on the
+`latest` tag until v0.1.0 GA (planned for M5 after the external human formal
+review).
