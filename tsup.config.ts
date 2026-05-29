@@ -1,6 +1,16 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "tsup";
 
+// Inject the package version at build time so the CLI's `--version` always
+// matches package.json without a hardcoded literal drifting out of sync.
+// esbuild's `define` replaces the `__KAWASEKIT_VERSION__` identifier with the
+// string below; `cli/index.ts` declares it as `const` for typecheck.
+const { version } = JSON.parse(
+	readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+) as { version: string };
+
 export default defineConfig({
+	define: { __KAWASEKIT_VERSION__: JSON.stringify(version) },
 	// Use the object form so the output paths stay independent of the
 	// common-ancestor heuristic tsup applies to array-form `entry`. When
 	// `cli/index.ts` joined the entry list in M4-4, the implicit common

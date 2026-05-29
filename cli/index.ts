@@ -24,6 +24,10 @@ import { registerSessionKeyCommand } from "./commands/session-key";
 import { registerTransferCommand } from "./commands/transfer";
 import { ensureDotenvLoaded } from "./lib/env";
 
+// Replaced at build time by tsup's `define` (see tsup.config.ts) with the
+// literal package.json version. Declared here so `tsc --noEmit` typechecks.
+declare const __KAWASEKIT_VERSION__: string;
+
 ensureDotenvLoaded();
 
 const program = new Command();
@@ -32,7 +36,7 @@ program
 	.description(
 		"kawasekit — CLI for the kawasekit SDK (AI-agent stablecoin payments, Japan-first, JPYC-native).",
 	)
-	.version("0.0.0");
+	.version(__KAWASEKIT_VERSION__);
 
 registerInitCommand(program);
 registerAccountCommand(program);
