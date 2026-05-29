@@ -57,6 +57,7 @@ export {
 export {
 	type CreateX402HandlerParams,
 	createX402Handler,
+	type IdempotencyServerConfig,
 	type X402HandlerContext,
 	type X402InnerHandler,
 	type X402RequestHandler,

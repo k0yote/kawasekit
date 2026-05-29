@@ -9,7 +9,15 @@
  * @packageDocumentation
  */
 
-import { type Account, type Address, getAddress, type Hex, parseSignature } from "viem";
+import {
+	type Account,
+	type Address,
+	getAddress,
+	type Hex,
+	keccak256,
+	parseSignature,
+	stringToHex,
+} from "viem";
 
 // ---------------------------------------------------------------------------
 // Domain & typed-data shapes
@@ -115,6 +123,52 @@ export function generateAuthorizationNonce(): Hex {
 	const bytes = new Uint8Array(32);
 	crypto.getRandomValues(bytes);
 	return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}` as Hex;
+}
+
+/** Domain tag separating the nonce preimage from any other keccak use in the SDK. */
+const EIP3009_NONCE_DOMAIN_TAG = "kawasekit/eip3009-nonce/1";
+
+/**
+ * Derives a **deterministic** 32-byte EIP-3009 nonce from a reasoning-step
+ * idempotency key, scoped to `(from, verifyingContract, chainId)` so the same
+ * key never collides across tokens or chains (M5-1, Half B).
+ *
+ * `nonce = keccak256(DOMAIN_TAG ‖ idempotencyKey ‖ from ‖ verifyingContract ‖
+ * chainId)`. **No shared secret**: determinism across replicas / sub-agents
+ * needs only a shared `conversationId` (the source of the key), not secret
+ * distribution. A replayed key ⇒ identical nonce ⇒ the token contract's
+ * `authorizationState` rejects the second settlement — the on-chain last line of
+ * defence against re-signed same-intent duplicate payments. Use in place of
+ * {@link generateAuthorizationNonce} only when a key is available.
+ *
+ * `chainId` is in the preimage, so the same JPYC address on Polygon / Avalanche
+ * / Kaia / Ethereum yields distinct nonces (cross-chain replay safety).
+ *
+ * @example
+ * ```ts
+ * import { deriveAuthorizationNonce } from "kawasekit";
+ *
+ * const nonce = deriveAuthorizationNonce(
+ *   { idempotencyKey },
+ *   { from: account.address, verifyingContract, chainId },
+ * );
+ * ```
+ */
+export function deriveAuthorizationNonce(
+	input: { readonly idempotencyKey: string },
+	scope: { readonly from: Address; readonly verifyingContract: Address; readonly chainId: number },
+): Hex {
+	if (input.idempotencyKey === "") {
+		throw new Error("deriveAuthorizationNonce: idempotencyKey must be a non-empty string");
+	}
+	const preimage = JSON.stringify([
+		EIP3009_NONCE_DOMAIN_TAG,
+		input.idempotencyKey,
+		getAddress(scope.from),
+		getAddress(scope.verifyingContract),
+		scope.chainId,
+	]);
+	return keccak256(stringToHex(preimage));
 }
 
 /**

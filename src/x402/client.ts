@@ -21,6 +21,7 @@ import { getAddress, isAddress } from "viem";
 import { getChain, isSupportedChainId } from "../chains";
 import {
 	authorizationDeadlineFromNow,
+	deriveAuthorizationNonce,
 	generateAuthorizationNonce,
 	signTransferWithAuthorization,
 } from "../tokens/eip3009";
@@ -146,6 +147,15 @@ export interface SignX402PaymentParams {
 	 * where lifetime = `min(signer default, requirements.maxTimeoutSeconds)`.
 	 */
 	readonly validBefore?: bigint;
+	/**
+	 * Optional reasoning-step idempotency key (M5-1, Half B). When supplied, the
+	 * EIP-3009 nonce is **derived deterministically** from it (instead of random)
+	 * so a re-signed same-intent payment produces the same on-chain nonce — the
+	 * token contract's `authorizationState` then rejects the duplicate
+	 * settlement. For a byte-identical re-sign, also pin `validBefore`. Build the
+	 * key with `createIdempotencyKeyBuilder` from `kawasekit/idempotency`.
+	 */
+	readonly idempotencyKey?: string;
 }
 
 /** Signer returned by {@link createX402PaymentSigner}. */
@@ -359,7 +369,17 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 				);
 			}
 
-			const nonce = generateAuthorizationNonce();
+			const nonce =
+				signParams.idempotencyKey !== undefined
+					? deriveAuthorizationNonce(
+							{ idempotencyKey: signParams.idempotencyKey },
+							{
+								from: account.address,
+								verifyingContract: pinnedDomain.verifyingContract,
+								chainId,
+							},
+						)
+					: generateAuthorizationNonce();
 			const signed = await signTransferWithAuthorization(
 				account,
 				{

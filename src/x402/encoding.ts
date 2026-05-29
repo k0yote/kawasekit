@@ -62,6 +62,14 @@ export const X402_HEADER_PAYMENT_SIGNATURE = "PAYMENT-SIGNATURE" as const;
  */
 export const X402_HEADER_PAYMENT_RESPONSE = "PAYMENT-RESPONSE" as const;
 
+/**
+ * Name of the optional request header that carries a reasoning-step idempotency
+ * key (M5-1). Standard `Idempotency-Key` (IETF draft / Stripe-compatible). When
+ * present, the x402 server deduplicates on this logical key; the EIP-3009 nonce
+ * remains the on-chain fund backstop. See `docs/rfc/m5-1-reasoning-step-idempotency.md`.
+ */
+export const X402_HEADER_IDEMPOTENCY_KEY = "Idempotency-Key" as const;
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------

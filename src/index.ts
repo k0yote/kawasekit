@@ -38,6 +38,7 @@ export {
 export {
 	authorizationDeadlineFromNow,
 	type CancelAuthorizationMessage,
+	deriveAuthorizationNonce,
 	type Eip3009Domain,
 	generateAuthorizationNonce,
 	type ReceiveWithAuthorizationMessage,
@@ -84,6 +85,7 @@ export {
 	encodePaymentRequiredHeader,
 	encodePaymentResponseHeader,
 	encodePaymentSignatureHeader,
+	X402_HEADER_IDEMPOTENCY_KEY,
 	X402_HEADER_PAYMENT_REQUIRED,
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
@@ -111,6 +113,7 @@ export {
 export {
 	type CreateX402HandlerParams,
 	createX402Handler,
+	type IdempotencyServerConfig,
 	type X402HandlerContext,
 	type X402InnerHandler,
 	type X402RequestHandler,
@@ -189,3 +192,30 @@ export {
 	type SettleEvent,
 	type VerifyEvent,
 } from "./observability/hooks";
+
+// ---------------------------------------------------------------------------
+// Reasoning-step idempotency (M5-1)
+// ---------------------------------------------------------------------------
+
+export {
+	type CanonicalRequestIdentity,
+	type CreateIdempotencyKeyBuilderParams,
+	type CreateInMemoryIdempotencyStoreParams,
+	createIdempotencyKeyBuilder,
+	createInMemoryIdempotencyStore,
+	deriveIdempotencyKey,
+	IdempotencyConfigError,
+	type IdempotencyKeyBuilder,
+	type IdempotencyLease,
+	type IdempotencyLookupResult,
+	type IdempotencyRecord,
+	IdempotencyRecordParseError,
+	IdempotencyRecordVersionError,
+	type IdempotencyResponseSnapshot,
+	type IdempotencyStore,
+	KAWASEKIT_IDEMPOTENCY_RECORD_VERSION,
+	type KawasekitIdempotencyRecordVersion,
+	normalizeIntentText,
+	parseIdempotencyRecord,
+	serializeIdempotencyRecord,
+} from "./idempotency";

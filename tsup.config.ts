@@ -20,6 +20,7 @@ export default defineConfig({
 	// fixes the layout to match `package.json#exports` exactly.
 	entry: {
 		index: "src/index.ts",
+		"idempotency/index": "src/idempotency/index.ts",
 		"x402/index": "src/x402/index.ts",
 		"x402/hono/index": "src/x402/hono/index.ts",
 		"session/index": "src/session/index.ts",

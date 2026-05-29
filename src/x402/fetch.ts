@@ -33,6 +33,7 @@ import {
 	decodePaymentRequiredHeader,
 	decodePaymentResponseHeader,
 	encodePaymentSignatureHeader,
+	X402_HEADER_IDEMPOTENCY_KEY,
 	X402_HEADER_PAYMENT_REQUIRED,
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
@@ -92,6 +93,20 @@ export interface WrapFetchParams {
 	 * (including `onPayment` declining the retry).
 	 */
 	readonly hooks?: ObservabilityHooks;
+	/**
+	 * Optional mapper from a request to a reasoning-step idempotency key (M5-1).
+	 * When it returns a key, the key is (a) sent as the `Idempotency-Key` request
+	 * header so the server can deduplicate, and (b) forwarded into the signer so
+	 * the EIP-3009 nonce is derived deterministically (on-chain backstop). Return
+	 * `undefined` to fall back to today's random-nonce behaviour. Build keys with
+	 * `createIdempotencyKeyBuilder` from `kawasekit/idempotency` at the agent
+	 * harness's tool-execution boundary, where the reasoning-step intent is visible.
+	 */
+	readonly idempotencyKeyFor?: (
+		input: string | URL | Request,
+		requirements: X402PaymentRequirements,
+		paymentRequired: X402PaymentRequiredResponse,
+	) => string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,13 +224,19 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 			return initialResponse;
 		}
 
+		const idempotencyKey = params.idempotencyKeyFor?.(input, chosen, paymentRequired);
+
 		const paymentPayload = await params.signer.sign({
 			paymentRequirements: chosen,
 			...(paymentRequired.resource ? { resource: paymentRequired.resource } : {}),
+			...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
 		});
 
 		const retryHeaders = new Headers(init?.headers);
 		retryHeaders.set(X402_HEADER_PAYMENT_SIGNATURE, encodePaymentSignatureHeader(paymentPayload));
+		if (idempotencyKey !== undefined) {
+			retryHeaders.set(X402_HEADER_IDEMPOTENCY_KEY, idempotencyKey);
+		}
 
 		const retryResponse = await baseFetch(input, { ...init, headers: retryHeaders });
 

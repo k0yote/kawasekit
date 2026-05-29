@@ -40,6 +40,16 @@
 				"default": "./dist/index.cjs"
 			}
 		},
+		"./idempotency": {
+			"import": {
+				"types": "./dist/idempotency/index.d.ts",
+				"default": "./dist/idempotency/index.js"
+			},
+			"require": {
+				"types": "./dist/idempotency/index.d.cts",
+				"default": "./dist/idempotency/index.cjs"
+			}
+		},
 		"./x402": {
 			"import": {
 				"types": "./dist/x402/index.d.ts",
