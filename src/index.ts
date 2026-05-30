@@ -13,13 +13,19 @@ export {
 	createAgentSmartAccount,
 } from "./account/session-key";
 export {
+	avalanche,
+	avalancheFuji,
 	ChainNotSupportedError,
+	ethereum,
 	getChain,
 	isSupportedChainId,
 	type KawaseChain,
+	kaia,
+	kairos,
 	polygon,
 	polygonAmoy,
 	type SupportedChainId,
+	sepolia,
 	supportedChains,
 	zerodevRpcUrl,
 } from "./chains";
@@ -100,6 +106,7 @@ export {
 	createCoinbaseFacilitator,
 	createHttpFacilitator,
 	createSelfFacilitator,
+	deriveReceiptTimeoutMs,
 	X402_FACILITATOR_ERROR_CODES,
 } from "./x402/facilitator";
 export { type WrapFetchParams, wrapFetch, type X402Fetch } from "./x402/fetch";

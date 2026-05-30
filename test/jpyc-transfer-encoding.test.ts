@@ -64,7 +64,7 @@ describe("transferJpyc input validation", () => {
 	it("rejects an unsupported chain", async () => {
 		const wrongChainClient = {
 			...baseFakeClient,
-			chain: { id: 1 },
+			chain: { id: 8453 },
 		} as unknown as ConfiguredKernelClient;
 		await expect(transferJpyc(wrongChainClient, { to: TO, amount: 1n })).rejects.toThrow(
 			/not a kawasekit-supported chain/,

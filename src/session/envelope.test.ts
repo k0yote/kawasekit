@@ -116,8 +116,8 @@ describe("parseSessionEnvelope — validation", () => {
 		expect(() => parseSessionEnvelope(JSON.stringify(rest))).toThrow(SessionEnvelopeVersionError);
 	});
 
-	it("rejects unsupported chainId (e.g. eip155:1)", () => {
-		const bad = JSON.stringify({ ...MIN, chainId: 1 });
+	it("rejects unsupported chainId (e.g. Base eip155:8453)", () => {
+		const bad = JSON.stringify({ ...MIN, chainId: 8453 });
 		expect(() => parseSessionEnvelope(bad)).toThrow(SessionEnvelopeParseError);
 	});
 

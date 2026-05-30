@@ -44,6 +44,7 @@ export {
 	createCoinbaseFacilitator,
 	createHttpFacilitator,
 	createSelfFacilitator,
+	deriveReceiptTimeoutMs,
 	X402_FACILITATOR_ERROR_CODES,
 } from "./facilitator";
 export { type WrapFetchParams, wrapFetch, type X402Fetch } from "./fetch";

@@ -16,7 +16,7 @@
 
 import type { Account, Address, Chain, Hex, PublicClient, Transport, WalletClient } from "viem";
 import { getAddress, parseSignature, recoverTypedDataAddress } from "viem";
-import { getChain, isSupportedChainId, type SupportedChainId } from "../chains";
+import { getChain, isSupportedChainId, type KawaseChain, type SupportedChainId } from "../chains";
 import {
 	invokeHookSafely,
 	type ObservabilityHooks,
@@ -258,6 +258,32 @@ export interface CreateSelfFacilitatorParams {
 	readonly hooks?: ObservabilityHooks;
 }
 
+const RECEIPT_TIMEOUT_FLOOR_MS = 60_000;
+const RECEIPT_INCLUSION_MS = 15_000;
+const RECEIPT_TIMEOUT_SLACK = 1.5;
+
+/**
+ * Auto-sizes the settle receipt timeout to a confirmation depth and the chain's
+ * block time: `max(60_000, 15_000 + confirmations × blockTimeMs × 1.5)`. This is
+ * the default {@link CreateSelfFacilitatorParams.receiptTimeoutMs} when the
+ * operator does not pass one, so a deep-confirmation chain (Ethereum's `32` ×
+ * ~12 s ≈ 10 min) does not time out at the flat 60 s floor, while shallow chains
+ * (Polygon) keep the floor. Exposed so operators tuning `confirmations` per the
+ * [finality recipe](../../docs/recipes/facilitator-finality-tuning.md) can
+ * compute a matching timeout.
+ *
+ * @example
+ * ```ts
+ * import { deriveReceiptTimeoutMs, ethereum } from "kawasekit";
+ *
+ * deriveReceiptTimeoutMs(ethereum, 32); // ≈ 591_000 ms
+ * ```
+ */
+export function deriveReceiptTimeoutMs(chain: KawaseChain, confirmations: number): number {
+	const wallMs = RECEIPT_INCLUSION_MS + confirmations * chain.blockTimeMs * RECEIPT_TIMEOUT_SLACK;
+	return Math.max(RECEIPT_TIMEOUT_FLOOR_MS, Math.ceil(wallMs));
+}
+
 /**
  * Builds a facilitator that verifies and broadcasts exact-EVM EIP-3009
  * payments using a locally-held EOA private key (gas payer).
@@ -293,13 +319,6 @@ export interface CreateSelfFacilitatorParams {
  */
 export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Facilitator {
 	const { walletClient, publicClient } = params;
-	const receiptTimeoutMs = params.receiptTimeoutMs ?? 60_000;
-	// Chain-aware confirmation depth (threat 2.8 / §6.6 mitigation). Defaults
-	// kick in only when the operator did not pass an explicit value; the
-	// network-vs-isTestnet check below has already locked down which side we
-	// are on.
-	const defaultConfirmations = params.network === "mainnet" ? 4 : 1;
-	const confirmations = params.confirmations ?? defaultConfirmations;
 	const facilitatorChainId = walletClient.chain.id;
 	if (!isSupportedChainId(facilitatorChainId)) {
 		throw new Error(
@@ -318,6 +337,15 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 			`createSelfFacilitator: network="testnet" but walletClient.chain "${chain.name}" (chainId ${supportedChainId}) is a mainnet — refusing to broadcast with real funds`,
 		);
 	}
+	// Chain-aware confirmation depth (threat 2.8 / §6.6), sourced from the chain
+	// config (config-as-data): probabilistic chains need depth, deterministic-
+	// finality chains (Avalanche Snowman / Kaia IBFT) need 1-2, Ethereum ~32.
+	// Operators override via `params.confirmations`.
+	const confirmations = params.confirmations ?? chain.defaultConfirmations;
+	// `receiptTimeoutMs` auto-sizes to the depth so a deep-confirmation chain does
+	// not time out at the flat 60 s floor (e.g. Ethereum's 32×12 s). Shallow chains
+	// (Polygon) keep the 60 s floor. Override to extend further.
+	const receiptTimeoutMs = params.receiptTimeoutMs ?? deriveReceiptTimeoutMs(chain, confirmations);
 
 	// Threat 2.2 (concurrent settle nonce race) enforcement. The facilitator
 	// will broadcast `transferWithAuthorization` calls in parallel under any

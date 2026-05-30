@@ -458,13 +458,13 @@ describe("createX402PaymentSigner — requirements validation", () => {
 		);
 	});
 
-	it("rejects unsupported network (eip155:1 — Ethereum mainnet, not in supportedChains)", async () => {
+	it("rejects unsupported network (eip155:8453 — Base, not in supportedChains)", async () => {
 		const signer = createX402PaymentSigner({
 			network: "testnet",
 			account,
 			asset: { kind: "known", id: "jpyc-v2" },
 		});
-		const bad = { ...JPYC_REQ, network: "eip155:1" } as unknown as X402PaymentRequirements;
+		const bad = { ...JPYC_REQ, network: "eip155:8453" } as unknown as X402PaymentRequirements;
 		await expect(signer.sign({ paymentRequirements: bad })).rejects.toBeInstanceOf(
 			X402InvalidPayloadError,
 		);

@@ -10,10 +10,14 @@ safety / confirmation depth", closed) and [threat 2.8](../THREAT_MODEL.md)
 **Status**: Operator tuning guide for kawasekit ≥ `v0.1.0-beta`. Expands the
 inline §6.6 tuning table into a chain-by-chain, value-tiered recipe.
 
-> **Scope of "supported".** kawasekit ships a chain config only for **Polygon +
-> Polygon Amoy** today (`src/chains/`). The Avalanche / Ethereum / Kaia rows
-> below are **finality guidance**, not shipped configs — you must add the chain
-> config and pass `confirmations` explicitly. Kaia support is scheduled for M5-3.
+> **Scope of "supported".** As of M5-3, kawasekit ships chain configs for
+> **Polygon, Kaia, Avalanche, and Ethereum** (+ their testnets) in `src/chains/`,
+> each carrying a per-chain `defaultConfirmations` and `blockTimeMs`
+> (config-as-data). JPYC is live on the four mainnets (+ Amoy + Kairos) at the
+> same address; on Avalanche Fuji / Sepolia JPYC is unverified, so
+> `getJpycAddress` throws there. The **x402 EOA-payer path** works on every live
+> chain; the **smart-account path** is Polygon-verified (Kaia's runs via Pimlico
+> in a later phase).
 
 ---
 
@@ -37,10 +41,14 @@ There are **two knobs**, and they must be tuned **together**:
 | Knob | What it does | Default (`src/x402/facilitator.ts`) |
 |---|---|---|
 | `confirmations` | blocks to wait past inclusion before returning success | `4` on mainnet, `1` on testnet (`:301-302`) |
-| `receiptTimeoutMs` | how long `settle()` waits before giving up | `60_000` (60 s) (`:296`) |
+| `receiptTimeoutMs` | how long `settle()` waits before giving up | **auto-sized** from `confirmations` × block time (floor 60 s), via `deriveReceiptTimeoutMs` (`:296` area) |
 
-**The trap:** raising `confirmations` without raising `receiptTimeoutMs` makes
-`settle()` time out before the depth is ever reached. See the worked example.
+**The trap — now handled for you.** Raising `confirmations` without a matching
+`receiptTimeoutMs` would make `settle()` time out before the depth is reached. The
+SDK closes this: when you do not pass `receiptTimeoutMs`, it is derived from the
+depth (`deriveReceiptTimeoutMs(chain, confirmations)`), so a deep-confirmation
+chain like Ethereum (`32` × ~12 s) gets ~10 min, not the 60 s floor. Override only
+to extend further. See the worked example.
 
 ---
 
@@ -55,9 +63,9 @@ in epochs.
 |---|---|---|---|---|
 | **Polygon PoS** (mainnet) | ~2 s | Probabilistic; checkpoints to L1 ~every 30 min | **4** (default) → 16–256 by value | kawasekit's primary chain; the default `4` ≈ ~8 s soft finality. Depth is the main lever here. |
 | **Polygon Amoy** (testnet) | ~2 s | Probabilistic | **1** (default) | Fast dev loops; do not infer mainnet safety from Amoy. |
-| **Avalanche C-Chain** | ~2 s | Snowman BFT — sub-`2 s` deterministic finality | **1–2** | A confirmed block is final; deep confirmations add latency for ~no extra safety. Not a shipped config. |
-| **Ethereum** (mainnet) | ~12 s | Casper FFG — finality at 2 epochs (~12.8 min) | **12** (high-confidence) → 32–64 (finalised) | ~12 ≈ 2.4 min high-probability; ~64 ≈ full finality. Deep depths need a large `receiptTimeoutMs`. Not a shipped config. |
-| **Kaia** | ~1 s | IBFT — **immediate finality** | **1** | A single block is final, so `confirmations: 1` is correct (unlike Polygon's `4`). This is the planned Kaia default (M5-3). Not yet a shipped config. |
+| **Avalanche C-Chain** | ~2 s | Snowman BFT — sub-`2 s` deterministic finality | **2** (shipped default) | A confirmed block is final; deep confirmations add latency for ~no extra safety. |
+| **Ethereum** (mainnet) | ~12 s | Casper FFG — finality at 2 epochs (~12.8 min) | **32** (shipped default) → 64 (fully finalised) | ~32 ≈ 6.4 min finalised-grade; the SDK auto-sizes `receiptTimeoutMs` (~10 min) so the default does not time out. |
+| **Kaia** | ~1 s | IBFT — **immediate finality** | **1** (shipped default) | A single block is final, so `confirmations: 1` is correct (do **not** copy Polygon's `4`). |
 
 > **Do not copy Polygon's `4` to Avalanche/Kaia.** On deterministic-finality
 > chains, `confirmations: 1` is both correct and faster. On Ethereum, `4` is far
@@ -83,33 +91,34 @@ high-frequency *small* calls stays at the default; a merchant doing occasional
 
 ---
 
-## Worked example: raising depth + matching the timeout
+## Worked example: deep confirmations (the SDK sizes the timeout)
 
 You sell a 250 JPYC report on Polygon mainnet and want `confirmations: 64`
-(~2 min). The default `receiptTimeoutMs` is 60 s — **`settle()` would time out at
-~30 confirmations and report failure even though the tx is mining fine.** Size
-the timeout to the depth:
+(~2 min). You no longer have to hand-size the timeout — the SDK derives it from
+the depth (`deriveReceiptTimeoutMs`) so `settle()` does not die at the 60 s floor:
 
 ```
-receiptTimeoutMs ≳ inclusionMs + confirmations × blockTimeMs × slack
-                 ≈ 10_000      + 64           × 2_000        × 1.5
-                 ≈ 10_000 + 192_000  ≈ 202_000  → round up to 240_000
+receiptTimeoutMs = max(60_000, inclusionMs + confirmations × blockTimeMs × slack)
+                 = max(60_000, 15_000 + 64 × 2_000 × 1.5)
+                 = max(60_000, 207_000)  =  207_000 ms  (~3.5 min)
 ```
 
-- `inclusionMs` — time to first inclusion (a few blocks of mempool + build).
-- `slack` (≈ 1.5–2×) — absorbs slow blocks / RPC lag so a healthy settle is not
-  killed by a tight timeout.
+- `inclusionMs` (15 s) — time to first inclusion (a few blocks of mempool + build).
+- `slack` (1.5×) — absorbs slow blocks / RPC lag so a healthy settle is not killed
+  by a tight timeout.
 
 ```ts
-import { createSelfFacilitator } from "kawasekit";
+import { createSelfFacilitator, deriveReceiptTimeoutMs, polygon } from "kawasekit";
 
 const facilitator = createSelfFacilitator({
   network: "mainnet",
   walletClient, // account MUST carry viem `nonceManager` (threat 2.2)
   publicClient,
-  confirmations: 64,        // ~2 min finality on Polygon
-  receiptTimeoutMs: 240_000, // sized to the depth above — NOT the 60 s default
+  confirmations: 64, // receiptTimeoutMs auto-sizes to ~207_000 ms
 });
+
+// Override receiptTimeoutMs only to add slack beyond the derived default:
+deriveReceiptTimeoutMs(polygon, 64); // 207_000 — compute it yourself if needed
 ```
 
 **Operator action on timeout overrun.** If `settle()` still times out (network
@@ -190,13 +199,13 @@ This turns "how deep should I wait?" from a guess into a measured SLO.
 
 | Param | Default | Source |
 |---|---|---|
-| `confirmations` (mainnet) | `4` | `src/x402/facilitator.ts:301` |
-| `confirmations` (testnet) | `1` | `src/x402/facilitator.ts:301-302` |
-| `receiptTimeoutMs` | `60_000` (60 s) | `src/x402/facilitator.ts:296` |
+| `confirmations` | per-chain `KawaseChain.defaultConfirmations` — Polygon `4` / Kaia `1` / Avalanche `2` / Ethereum `32` (testnets lower) | `src/chains/`, read in `createSelfFacilitator` |
+| `receiptTimeoutMs` | `deriveReceiptTimeoutMs(chain, confirmations)` = `max(60_000, 15_000 + confirmations × blockTimeMs × 1.5)` | `src/x402/facilitator.ts` |
 
-The defaults are tuned for kawasekit's target case — **small-value Polygon
-paywall hits**. Every higher-value or different-chain deployment should override
-both explicitly, using the tables above.
+Confirmation depth is now **config-as-data per chain** (M5-3) — the facilitator
+reads `chain.defaultConfirmations` rather than a binary mainnet/testnet switch,
+and auto-sizes `receiptTimeoutMs` to match. Override either explicitly for a
+specific value tier, using the tables above.
 
 ---
 

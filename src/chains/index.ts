@@ -1,12 +1,31 @@
-import { type KawaseChain, polygon, polygonAmoy, zerodevRpcUrl } from "./polygon";
+import { avalanche, avalancheFuji } from "./avalanche";
+import { ethereum, sepolia } from "./ethereum";
+import { kaia, kairos } from "./kaia";
+import { polygon, polygonAmoy } from "./polygon";
+import { type KawaseChain, zerodevRpcUrl } from "./types";
 
-export { type KawaseChain, polygon, polygonAmoy, zerodevRpcUrl };
+export {
+	avalanche,
+	avalancheFuji,
+	ethereum,
+	type KawaseChain,
+	kaia,
+	kairos,
+	polygon,
+	polygonAmoy,
+	sepolia,
+	zerodevRpcUrl,
+};
 
 /**
- * All chains kawasekit supports, in priority order.
+ * All chains kawasekit supports, in priority order (CLAUDE.md chain priority:
+ * Polygon → Kaia → Avalanche → Ethereum, each with its testnet).
  *
  * Exposed as a `readonly` tuple — **not** a `Map` — so that bundlers can
  * tree-shake chains a consumer never references.
+ *
+ * JPYC liveness is a separate axis (`src/tokens/jpyc.ts`): a chain can be
+ * supported here while JPYC is not yet live on it (Avalanche Fuji / Sepolia).
  *
  * @example
  * ```ts
@@ -17,10 +36,20 @@ export { type KawaseChain, polygon, polygonAmoy, zerodevRpcUrl };
  * }
  * ```
  */
-export const supportedChains = [polygon, polygonAmoy] as const;
+export const supportedChains = [
+	polygon,
+	polygonAmoy,
+	kaia,
+	kairos,
+	avalanche,
+	avalancheFuji,
+	ethereum,
+	sepolia,
+] as const;
 
 /**
- * Union of every chain ID kawasekit supports — currently `137 | 80002`.
+ * Union of every chain ID kawasekit supports
+ * (`137 | 80002 | 8217 | 1001 | 43114 | 43113 | 1 | 11155111`).
  *
  * Derived from {@link supportedChains}, so adding a chain there extends this
  * type automatically.

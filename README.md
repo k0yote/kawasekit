@@ -301,23 +301,31 @@ const restored = await restoreSessionAccount({
 
 ## Supported Chains
 
-JPYC availability and kawasekit support are **two separate axes** — JPYC being
-live on a chain does **not** mean kawasekit has a config or has been tested
-there. Today kawasekit ships a chain config only for **Polygon + Polygon Amoy**
-(`src/chains/`); `getJpycAddress` / `SupportedChainId` accept only those two.
+JPYC availability and kawasekit support are **two separate axes**. As of M5-3,
+kawasekit ships chain configs for **Polygon, Kaia, Avalanche, and Ethereum**
+(+ their testnets) in `src/chains/`, each carrying a per-chain finality default
+(`defaultConfirmations`). Two honest caveats: the **x402 EOA-payer path** works
+on every chain where JPYC is live, but the **smart-account path** (session keys,
+sponsored UserOps) is verified only on Polygon — Kaia's runs via Pimlico in a
+later phase. And JPYC is **not yet verified** on Avalanche Fuji / Sepolia, so
+`getJpycAddress` throws there.
 
-| Chain | JPYC availability | kawasekit support |
+| Chain (id) | JPYC (`0xE7C3…c29`) | kawasekit support |
 |---|---|---|
-| Polygon (mainnet) | ✅ Live (`0xE7C3…c29`) | ✅ M4 — config shipped, verified with live mainnet txs |
-| Polygon Amoy (testnet) | ✅ Live (`0xE7C3…c29`) | ✅ primary testnet target |
-| Kaia | ✅ Live (`0xE7C3…c29`, same address)¹ | 🚧 planned M5-3 (fast-follow; x402 EOA-payer path first) |
-| Avalanche | ✅ Live (`0xE7C3…c29`) | ⬜ not yet — no chain config |
-| Ethereum | ✅ Live (`0xE7C3…c29`) | ⬜ not yet — no chain config |
+| Polygon (137) | ✅ Live | ✅ config + x402 + smart-account; verified with live mainnet txs |
+| Polygon Amoy (80002) | ✅ Live | ✅ primary testnet target |
+| Kaia (8217) | ✅ Live, same address¹ | ✅ M5-3 config — x402 EOA path; smart-account via Pimlico (later) |
+| Kaia Kairos (1001) | ✅ Live (faucet) | ✅ M5-3 config — x402 EOA path |
+| Avalanche (43114) | ✅ Live | ✅ M5-3 config — x402 EOA path; smart-account untested |
+| Avalanche Fuji (43113) | ❓ unverified | ⚠️ config shipped; JPYC unverified (`getJpycAddress` throws) |
+| Ethereum (1) | ✅ Live | ✅ M5-3 config — x402 EOA path; smart-account untested; deep confirmations (32) |
+| Sepolia (11155111) | ❓ unverified | ⚠️ config shipped; JPYC unverified |
 
 ¹ JPYC officially launched on Kaia in 2026-05 (Kaia DLT Foundation; Unifi began
-JPYC support 2026-05-22), same contract address as the other chains. kawasekit
-has no Kaia chain config yet — support is scheduled for M5-3 (fast-follow, after
-the idempotency + GA backbone).
+JPYC support 2026-05-22), at the same contract address as the other chains. Kaia
+runs IBFT consensus with immediate finality, so its `defaultConfirmations` is `1`
+(not Polygon's `4`). See the
+[finality-tuning recipe](./docs/recipes/facilitator-finality-tuning.md).
 
 ## Why Japan-first
 
