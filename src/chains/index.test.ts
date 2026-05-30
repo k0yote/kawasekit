@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getJpycAddress, JPYC_V2_ADDRESS, JpycNotAvailableError } from "../tokens/jpyc";
+import { getJpycAddress, JPYC_V2_ADDRESS } from "../tokens/jpyc";
 import { deriveReceiptTimeoutMs } from "../x402/facilitator";
 import {
 	avalanche,
@@ -65,15 +65,17 @@ describe("per-chain finality config-as-data", () => {
 });
 
 describe("JPYC deployments across chains", () => {
-	it("returns the shared JPYC address on every live chain (same address everywhere)", () => {
-		for (const id of [polygon.id, polygonAmoy.id, kaia.id, kairos.id, avalanche.id, ethereum.id]) {
-			expect(getJpycAddress(id)).toBe(JPYC_V2_ADDRESS);
+	it("returns the shared JPYC address on every supported chain (same address everywhere)", () => {
+		for (const chain of supportedChains) {
+			expect(getJpycAddress(chain.id)).toBe(JPYC_V2_ADDRESS);
 		}
 	});
 
-	it("throws JpycNotAvailableError on chains where JPYC is unverified (Fuji / Sepolia)", () => {
-		expect(() => getJpycAddress(avalancheFuji.id)).toThrow(JpycNotAvailableError);
-		expect(() => getJpycAddress(sepolia.id)).toThrow(JpycNotAvailableError);
+	it("returns the address on Fuji / Sepolia too (JPYC verified live on-chain, 2026-05-31)", () => {
+		// Read-only on-chain check found name "JPY Coin" / symbol "JPYC" at 0xE7C3
+		// on both — the earlier isLive:false was too conservative.
+		expect(getJpycAddress(avalancheFuji.id)).toBe(JPYC_V2_ADDRESS);
+		expect(getJpycAddress(sepolia.id)).toBe(JPYC_V2_ADDRESS);
 	});
 });
 

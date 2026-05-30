@@ -19,12 +19,9 @@ export const avalanche = {
 } satisfies KawaseChain;
 
 /**
- * Avalanche Fuji testnet.
- *
- * ⚠️ JPYC presence on Fuji is **unverified** — `jpycDeployments` marks it
- * `isLive: false`, so `getJpycAddress(avalancheFuji.id)` throws
- * {@link JpycNotAvailableError} until a deployment is confirmed. The chain
- * config ships for completeness; x402 cannot settle here without JPYC.
+ * Avalanche Fuji testnet. JPYC is live at the same address as the other chains
+ * (confirmed via a read-only on-chain `name()` == "JPY Coin" / `symbol()` ==
+ * "JPYC" check, 2026-05-31). Real x402 settlement here has not been exercised.
  */
 export const avalancheFuji = {
 	...viemAvalancheFuji,

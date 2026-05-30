@@ -19,11 +19,9 @@ export const ethereum = {
 } satisfies KawaseChain;
 
 /**
- * Sepolia — Ethereum testnet.
- *
- * ⚠️ JPYC presence on Sepolia is **unverified** — `jpycDeployments` marks it
- * `isLive: false`, so `getJpycAddress(sepolia.id)` throws until a deployment is
- * confirmed. The chain config ships for completeness.
+ * Sepolia — Ethereum testnet. JPYC is live at the same address as the other
+ * chains (confirmed via a read-only on-chain `name()` == "JPY Coin" / `symbol()`
+ * == "JPYC" check, 2026-05-31). Real x402 settlement here has not been exercised.
  */
 export const sepolia = {
 	...viemSepolia,

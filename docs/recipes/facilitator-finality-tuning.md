@@ -13,11 +13,11 @@ inline §6.6 tuning table into a chain-by-chain, value-tiered recipe.
 > **Scope of "supported".** As of M5-3, kawasekit ships chain configs for
 > **Polygon, Kaia, Avalanche, and Ethereum** (+ their testnets) in `src/chains/`,
 > each carrying a per-chain `defaultConfirmations` and `blockTimeMs`
-> (config-as-data). JPYC is live on the four mainnets (+ Amoy + Kairos) at the
-> same address; on Avalanche Fuji / Sepolia JPYC is unverified, so
-> `getJpycAddress` throws there. The **x402 EOA-payer path** works on every live
-> chain; the **smart-account path** is Polygon-verified (Kaia's runs via Pimlico
-> in a later phase).
+> (config-as-data). JPYC is live at the same address on **all eight chains**
+> (Kaia / Kairos / Avalanche / Fuji / Sepolia confirmed via a read-only on-chain
+> `name()`/`symbol()` check). The **x402 EOA-payer path** works on every chain;
+> the **smart-account path** is Polygon-verified (Kaia's runs via Pimlico in a
+> later phase). Real x402 settlement on the new chains is not yet exercised.
 
 ---
 

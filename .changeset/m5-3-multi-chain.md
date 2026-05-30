@@ -14,10 +14,11 @@ Avalanche, Ethereum) plus their testnets, and makes confirmation depth a
 `ethereum` (1), `sepolia` (11155111) join `polygon` / `polygonAmoy`.
 `SupportedChainId` and `getChain` / `isSupportedChainId` extend automatically.
 
-JPYC uses the same address (`0xE7C3…c29`) on every chain where it is live: the
-four mainnets + Amoy + Kairos are `isLive: true`; **Avalanche Fuji and Sepolia
-are `isLive: false`** (JPYC presence unverified), so `getJpycAddress` throws
-there until a deployment is confirmed.
+JPYC uses the same address (`0xE7C3…c29`) on every supported chain, all
+`isLive: true` — Kaia / Kairos / Avalanche / Fuji / Sepolia were confirmed by a
+read-only on-chain check (`name()` == "JPY Coin", `symbol()` == "JPYC"); Polygon
+/ Amoy / Ethereum are established. (Real x402 settlement on the new chains is not
+yet exercised — config + liveness only.)
 
 ## Per-chain finality (config-as-data)
 

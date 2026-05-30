@@ -66,10 +66,14 @@ export interface JpycDeployment {
  * JPYC deployments keyed by chain.
  *
  * JPYC v2 uses the **same address** (`JPYC_V2_ADDRESS`) on every chain where it
- * is live. `isLive` is the separate "is JPYC actually deployed here yet?" axis:
- * the four mainnets (Polygon, Kaia, Avalanche, Ethereum) + Amoy + Kairos are
- * live; Avalanche Fuji and Sepolia are **unverified** (`isLive: false`) so
- * {@link getJpycAddress} throws for them until a deployment is confirmed.
+ * is live. `isLive` is the separate "is JPYC actually deployed here yet?" axis.
+ * All eight supported chains are live at this address: the four mainnets
+ * (Polygon, Kaia, Avalanche, Ethereum) + Amoy + Kairos + Avalanche Fuji +
+ * Sepolia. Kaia/Kairos/Avalanche/Fuji/Sepolia were confirmed by a read-only
+ * on-chain check (`name() == "JPY Coin"`, `symbol() == "JPYC"` at `0xE7C3…`,
+ * 2026-05-31); Polygon/Amoy/Ethereum are established. `isLive: false` + the
+ * {@link JpycNotAvailableError} path remain for any future chain added before
+ * its JPYC deployment lands.
  */
 export const jpycDeployments: { readonly [chainId in SupportedChainId]: JpycDeployment } = {
 	[polygon.id]: { chainId: polygon.id, address: JPYC_V2_ADDRESS, isLive: true },
@@ -78,9 +82,8 @@ export const jpycDeployments: { readonly [chainId in SupportedChainId]: JpycDepl
 	[kairos.id]: { chainId: kairos.id, address: JPYC_V2_ADDRESS, isLive: true },
 	[avalanche.id]: { chainId: avalanche.id, address: JPYC_V2_ADDRESS, isLive: true },
 	[ethereum.id]: { chainId: ethereum.id, address: JPYC_V2_ADDRESS, isLive: true },
-	// JPYC presence on these testnets is unverified — config-only until confirmed.
-	[avalancheFuji.id]: { chainId: avalancheFuji.id, address: JPYC_V2_ADDRESS, isLive: false },
-	[sepolia.id]: { chainId: sepolia.id, address: JPYC_V2_ADDRESS, isLive: false },
+	[avalancheFuji.id]: { chainId: avalancheFuji.id, address: JPYC_V2_ADDRESS, isLive: true },
+	[sepolia.id]: { chainId: sepolia.id, address: JPYC_V2_ADDRESS, isLive: true },
 };
 
 /**

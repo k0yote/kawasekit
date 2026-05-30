@@ -304,22 +304,25 @@ const restored = await restoreSessionAccount({
 JPYC availability and kawasekit support are **two separate axes**. As of M5-3,
 kawasekit ships chain configs for **Polygon, Kaia, Avalanche, and Ethereum**
 (+ their testnets) in `src/chains/`, each carrying a per-chain finality default
-(`defaultConfirmations`). Two honest caveats: the **x402 EOA-payer path** works
-on every chain where JPYC is live, but the **smart-account path** (session keys,
-sponsored UserOps) is verified only on Polygon — Kaia's runs via Pimlico in a
-later phase. And JPYC is **not yet verified** on Avalanche Fuji / Sepolia, so
-`getJpycAddress` throws there.
+(`defaultConfirmations`). JPYC is live at the same address on **all eight
+chains** (Kaia / Kairos / Avalanche / Fuji / Sepolia confirmed by a read-only
+on-chain `name()`/`symbol()` check; Polygon / Amoy / Ethereum established). Two
+honest caveats: the **x402 EOA-payer path** works on every chain, but the
+**smart-account path** (session keys, sponsored UserOps) is verified only on
+Polygon — Kaia's runs via Pimlico in a later phase; and **real x402 settlement
+has not yet been exercised** on the new chains (only unit tests + the read-only
+liveness check).
 
 | Chain (id) | JPYC (`0xE7C3…c29`) | kawasekit support |
 |---|---|---|
 | Polygon (137) | ✅ Live | ✅ config + x402 + smart-account; verified with live mainnet txs |
 | Polygon Amoy (80002) | ✅ Live | ✅ primary testnet target |
 | Kaia (8217) | ✅ Live, same address¹ | ✅ M5-3 config — x402 EOA path; smart-account via Pimlico (later) |
-| Kaia Kairos (1001) | ✅ Live (faucet) | ✅ M5-3 config — x402 EOA path |
+| Kaia Kairos (1001) | ✅ Live (on-chain verified) | ✅ M5-3 config — x402 EOA path |
 | Avalanche (43114) | ✅ Live | ✅ M5-3 config — x402 EOA path; smart-account untested |
-| Avalanche Fuji (43113) | ❓ unverified | ⚠️ config shipped; JPYC unverified (`getJpycAddress` throws) |
+| Avalanche Fuji (43113) | ✅ Live (on-chain verified) | ✅ M5-3 config — x402 EOA path |
 | Ethereum (1) | ✅ Live | ✅ M5-3 config — x402 EOA path; smart-account untested; deep confirmations (32) |
-| Sepolia (11155111) | ❓ unverified | ⚠️ config shipped; JPYC unverified |
+| Sepolia (11155111) | ✅ Live (on-chain verified) | ✅ M5-3 config — x402 EOA path |
 
 ¹ JPYC officially launched on Kaia in 2026-05 (Kaia DLT Foundation; Unifi began
 JPYC support 2026-05-22), at the same contract address as the other chains. Kaia
