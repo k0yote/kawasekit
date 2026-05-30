@@ -5,10 +5,15 @@
 [![npm version](https://img.shields.io/npm/v/kawasekit.svg)](https://www.npmjs.com/package/kawasekit)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-🚧 **Status**: M4 complete — `kawasekit@0.1.0-beta.2` is published on npm (SLSA provenance, `beta` dist-tag) and mainnet-capable, with payment flows verified on Polygon mainnet. **Not yet GA.** Production use is currently constrained to **small per-call values**: the reasoning-step idempotency gap (see [`docs/THREAT_MODEL.md` §6.1](./docs/THREAT_MODEL.md#61-reasoning-step-idempotency-gap)) is not yet closed, so duplicate-payment scenarios are the integrator's responsibility. GA (`0.1.0` on the `latest` tag) is gated on closing the fund-correctness gaps — the §6.1 idempotency layer (or GA explicitly scoped to small per-call values) plus a `maxAmountPerSign` ceiling — and a clean beta soak. Review happens **continuously in the open**: issues and counter-examples are welcome on GitHub and via [SECURITY.md](./SECURITY.md) (the §6.1 gap itself came from public feedback). A formal third-party audit is a goal on the road to `1.0`, not a `0.1.0` GA blocker. Built in public.
+🚧 **Status**: M5 backbone complete — `kawasekit@0.1.0-beta.3` is published on npm (SLSA provenance, `beta` dist-tag) and mainnet-capable, with payment flows verified on Polygon mainnet. **Not yet GA**, but **both `0.1.0` fund-correctness gates are now closed**:
+
+- **Reasoning-step idempotency** ([`docs/THREAT_MODEL.md` §6.1](./docs/THREAT_MODEL.md), now closed) — a default-on server dedup layer prevents duplicate payments for identical re-sends, and an opt-in client-derived EIP-3009 nonce makes the token contract reject re-signed same-intent duplicates on-chain. See the [idempotency note](#x402-paywall-m3-1).
+- **`maxAmountPerSign`** (threat 1.14) — the signer can now pin a per-signature value ceiling, the way it already pins the asset.
+
+This removes the earlier blanket "small per-call values only" caveat: preventing duplicate payment is now a matter of correct integration (wiring a reasoning-step key for the regenerate / fan-out case), not a missing SDK capability. GA (`0.1.0` on the `latest` tag) now waits on a **clean one-week beta soak**. Review happens **continuously in the open**: issues and counter-examples are welcome on GitHub and via [SECURITY.md](./SECURITY.md) (the §6.1 gap itself came from public feedback). A formal third-party audit is a goal on the road to `1.0`, not a `0.1.0` GA blocker. Built in public.
 
 ```bash
-pnpm add kawasekit@beta   # 0.1.0-beta.2 — pre-GA, mainnet-capable
+pnpm add kawasekit@beta   # 0.1.0-beta.3 — pre-GA, mainnet-capable
 ```
 
 ## Vision
@@ -25,7 +30,7 @@ Built around modern account abstraction (ERC-4337 / Kernel v3.1) and Japan's fir
 - [x] **M2**: JPYC transfer via UserOp + EIP-3009 signing helpers + Daily Limit spending policy
 - [x] **M3**: x402 v2 server/client/facilitator + session-key lifecycle + Mastra/Hono integration example
 - [x] **M4**: Polygon mainnet support + observability (Prometheus / OTLP) + CLI + docs site + npm `0.1.0-alpha`/`0.1.0-beta` release
-- [ ] **M5**: Reasoning-step idempotency layer (§6.1) + `0.1.0` GA promote + Kaia support — the technical prerequisites for first real integrations
+- [ ] **M5** *(backbone done)*: reasoning-step idempotency layer (§6.1 ✅) + `maxAmountPerSign` ceiling (✅) → **both `0.1.0` fund-correctness gates closed**. Remaining: `0.1.0` GA promote (after a clean beta soak) and Kaia support (fast-follow). The README roadmap's framing — "Community building + first real integrations" — is the *outcome*; closing these gaps is the technical *prerequisite* for it.
 - [ ] **M6**: Managed service alpha + Rust policy engine
 
 ## Quick Start
@@ -173,8 +178,10 @@ const app = new Hono();
 app.use(
   "/weather/*",
   x402Middleware({
-    // `network` is required (M4-1): it is cross-checked against
-    // walletClient.chain.isTestnet and throws on mismatch.
+    // `network` is required (M4-1): cross-checked against walletClient.chain.isTestnet,
+    // throws on mismatch. walletClient.account MUST be built with viem's `nonceManager`
+    // — createSelfFacilitator throws at construction otherwise (threat 2.2). On mainnet
+    // it waits for 4 confirmations by default (1 on testnet); override with `confirmations`.
     facilitator: createSelfFacilitator({ network: "testnet", walletClient, publicClient }),
     requirementsFor: () => [
       buildPaymentRequirements({
@@ -189,10 +196,17 @@ app.use(
 app.get("/weather/:city", (c) => c.json({ city: c.req.param("city"), weather: "sunny" }));
 ```
 
+The server **deduplicates identical re-sent paid requests by default** (M5-1): an
+in-memory store replays the cached response instead of settling twice, and closes
+the verify→settle race. It is single-process — for multi-replica deployments pass a
+shared store (or rely on the client-derived nonce below); disable with
+`idempotency: { store: "none" }`. See the [idempotency note](#x402-paywall-m3-1) below.
+
 Client (any `fetch` becomes x402-aware):
 
 ```typescript
 import { createX402PaymentSigner, JPYC_DECIMALS, wrapFetch } from "kawasekit";
+import { createIdempotencyKeyBuilder } from "kawasekit/idempotency";
 import { parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -202,7 +216,15 @@ const signer = createX402PaymentSigner({
   // Pin to the JPYC v2 EIP-712 domain at construction. The wire-format
   // extra.name / extra.version are ignored — Threat 1.4 mitigation.
   asset: { kind: "known", id: "jpyc-v2" },
+  // Per-signature value ceiling (M5-2, threat 1.14): refuse to sign any
+  // requirement above this. Pins the *amount* the way `asset` pins the token.
+  maxAmountPerSign: parseUnits("1", JPYC_DECIMALS), // ≤ 1 JPYC per call
 });
+
+// One key builder per agent run; call .next(intent) at each tool-execution
+// boundary and reuse the returned key for retries of that step.
+const keys = createIdempotencyKeyBuilder({ conversationId: "conv-42" });
+let stepKey = keys.next("fetch_weather:Tokyo");
 
 // onPayment is *required* at the type level — kawasekit refuses to default
 // to "always pay" silently. The callback is your budget guard.
@@ -216,20 +238,36 @@ const fetch402 = wrapFetch({
     spent = next;
     return true;
   },
+  // Reasoning-step idempotency (M5-1): the key is sent as an `Idempotency-Key`
+  // header AND derives a deterministic EIP-3009 nonce, so a regenerate /
+  // multi-agent re-sign of the SAME intent reuses the nonce and the token
+  // contract rejects the duplicate on-chain. Omit for today's random-nonce path.
+  idempotencyKeyFor: () => stepKey,
 });
 
 const res = await fetch402("https://api.example.com/weather/Tokyo");
 // → 402 → onPayment guard → signed retry → 200 with JPYC settled on-chain
 ```
 
-> **⚠️ Call-level idempotency only.** kawasekit guarantees that a single
-> `fetch402(...)` call settles **at most once** (EIP-3009 nonce + viem
-> `nonceManager`). It does **not** prevent your agent from invoking
-> `fetch402(...)` twice for the same reasoning step — retries, regeneration,
-> pause-resume, and multi-agent fan-out can each cause duplicate charges.
-> **Step-level idempotency is your responsibility**: track an
-> `Idempotency-Key` per reasoning step at the agent framework layer.
-> See [`docs/THREAT_MODEL.md` §6.1](./docs/THREAT_MODEL.md#61-reasoning-step-idempotency-gap) for the threat boundary.
+> **Reasoning-step idempotency (M5-1).** kawasekit now prevents one agent
+> reasoning step from paying twice, across two layers:
+>
+> - **Identical re-send — handled by default.** The server dedup layer (shown in
+>   the server example above) replays the cached response for a re-sent /
+>   network-duplicate request and closes the verify→settle race — no
+>   configuration needed (threat 1.8c, ✅). It is single-process; use a shared
+>   store for multiple replicas, or rely on the derived nonce below.
+> - **Re-signed same intent — wire the key.** A "Regenerate" click or multi-agent
+>   fan-out signs a *fresh* authorization for the same intent. Pass a
+>   reasoning-step key (`idempotencyKeyFor` + `createIdempotencyKeyBuilder`, shown
+>   in the client example) so the EIP-3009 nonce is derived deterministically and
+>   the JPYC contract rejects the duplicate **on-chain**, across uncoordinated
+>   replicas. The SDK can't do this for you — it never sees the LLM intent, only
+>   your harness does — so this half is **operator responsibility** (threat 1.8b,
+>   parallel to the asset pin). Omit the key to fall back to random-nonce behaviour.
+>
+> See [`docs/THREAT_MODEL.md` §6.1](./docs/THREAT_MODEL.md) (now closed) and the
+> [design RFC](./docs/rfc/m5-1-reasoning-step-idempotency.md) for the full model.
 
 ### Session-key lifecycle (M3-2)
 
@@ -272,13 +310,14 @@ there. Today kawasekit ships a chain config only for **Polygon + Polygon Amoy**
 |---|---|---|
 | Polygon (mainnet) | ✅ Live (`0xE7C3…c29`) | ✅ M4 — config shipped, verified with live mainnet txs |
 | Polygon Amoy (testnet) | ✅ Live (`0xE7C3…c29`) | ✅ primary testnet target |
-| Kaia | ✅ Live (`0xE7C3…c29`, same address)¹ | 🚧 planned M5 (x402 EOA-payer path first) |
+| Kaia | ✅ Live (`0xE7C3…c29`, same address)¹ | 🚧 planned M5-3 (fast-follow; x402 EOA-payer path first) |
 | Avalanche | ✅ Live (`0xE7C3…c29`) | ⬜ not yet — no chain config |
 | Ethereum | ✅ Live (`0xE7C3…c29`) | ⬜ not yet — no chain config |
 
 ¹ JPYC officially launched on Kaia in 2026-05 (Kaia DLT Foundation; Unifi began
 JPYC support 2026-05-22), same contract address as the other chains. kawasekit
-has no Kaia chain config yet — support is scheduled for M5.
+has no Kaia chain config yet — support is scheduled for M5-3 (fast-follow, after
+the idempotency + GA backbone).
 
 ## Why Japan-first
 
