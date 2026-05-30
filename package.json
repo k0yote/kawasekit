@@ -50,6 +50,16 @@
 				"default": "./dist/idempotency/index.cjs"
 			}
 		},
+		"./idempotency/redis": {
+			"import": {
+				"types": "./dist/idempotency/redis/index.d.ts",
+				"default": "./dist/idempotency/redis/index.js"
+			},
+			"require": {
+				"types": "./dist/idempotency/redis/index.d.cts",
+				"default": "./dist/idempotency/redis/index.cjs"
+			}
+		},
 		"./x402": {
 			"import": {
 				"types": "./dist/x402/index.d.ts",

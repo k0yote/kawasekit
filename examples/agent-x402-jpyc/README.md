@@ -151,12 +151,33 @@ pnpm m3:session-revoke           # transfer → revoke → asserted post-revoke 
 | server `app.use("/weather/*", x402Middleware(...))` | `x402Middleware` from `kawasekit/x402/hono` | turns any Hono route into an x402 paywall |
 | server `createSelfFacilitator(...)` | `createSelfFacilitator` | local verify + settle; no Coinbase CDP / external facilitator |
 | server `buildPaymentRequirements(...)` | `buildPaymentRequirements` | well-formed v2 `PaymentRequirements` with the JPYC `extra` baked in |
-| agent `wrapFetch({ signer, onPayment })` | `wrapFetch` | any `fetch` becomes x402-aware; `onPayment` is the budget hook |
+| agent `wrapFetch({ signer, onPayment, idempotencyKeyFor })` | `wrapFetch` | any `fetch` becomes x402-aware; `onPayment` is the budget hook; `idempotencyKeyFor` adds reasoning-step idempotency |
 | agent `createX402PaymentSigner({ network, account, asset })` | `createX402PaymentSigner` | EOA-bound signer that produces EIP-3009 authorisations; `asset` pins the EIP-712 domain (use `{ kind: "known", id: "jpyc-v2" }`) |
+| agent `deriveIdempotencyKey({ conversationId, stepId, intent })` | from `kawasekit/idempotency` | a deterministic reasoning-step key → derived EIP-3009 nonce |
 | sidecar `issueSessionKey` / `restoreSessionAccount` | from `kawasekit/session` | owner-side issuance + agent-side restoration with chain / version / signer fail-fast |
 
 Each of these has a JSDoc `@example` in the source. Read them straight
 from your editor's hover popup.
+
+### Reasoning-step idempotency (M5-1)
+
+An LLM agent can pay **twice for one intent** — a retry, a "Regenerate", or
+multi-agent fan-out re-signs the same logical request. This example wires the
+M5-1 idempotency layer so that does not cost real JPYC twice:
+
+- The agent passes `wrapFetch`'s `idempotencyKeyFor`, deriving a key from the
+  request (`deriveIdempotencyKey`). The same intent → the same key → the **same
+  EIP-3009 nonce**, so a re-signed duplicate is rejected on-chain by the JPYC
+  contract's `authorizationState` — across uncoordinated replicas.
+- The server's dedup store is **default-on** (`createX402Handler`), so identical
+  re-sends replay the cached `200` instead of settling again. For a multi-replica
+  server, pass a shared store: `createRedisIdempotencyStore` from
+  `kawasekit/idempotency/redis`.
+
+Claude fans out `fetch_weather` calls **in parallel**, so the example derives the
+key from the request URL (the city = the intent) rather than a monotonic
+counter, which would race under parallel tool calls. See the comment on
+`idempotencyKeyFor` in `agent/index.ts`.
 
 ## Switching to production: replace `env://` with `kms://`
 

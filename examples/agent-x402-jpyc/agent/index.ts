@@ -27,6 +27,7 @@ import {
 	wrapFetch,
 	X402_HEADER_PAYMENT_RESPONSE,
 } from "kawasekit";
+import { deriveIdempotencyKey } from "kawasekit/idempotency";
 import { formatUnits, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { z } from "zod";
@@ -57,6 +58,11 @@ const userPrompt =
 const modelId = optionalEnv("ANTHROPIC_MODEL") ?? "claude-sonnet-4-5";
 const budgetHuman = optionalEnv("AGENT_BUDGET_JPYC") ?? "0.01";
 const budget = parseUnits(budgetHuman, JPYC_DECIMALS);
+// Stable id for this agent run. Reuse the SAME value across a "Regenerate" so
+// the derived idempotency keys (and EIP-3009 nonces) reproduce and a re-signed
+// same-intent payment is rejected on-chain. A real app uses a durable
+// conversation / session id; here we derive it from the prompt.
+const conversationId = optionalEnv("AGENT_CONVERSATION_ID") ?? `weather:${userPrompt}`;
 
 const payer = privateKeyToAccount(payerPk);
 const signer = createX402PaymentSigner({
@@ -79,6 +85,20 @@ const fetch402 = wrapFetch({
 			return false;
 		}
 		return true;
+	},
+	// Reasoning-step idempotency (M5-1, Half B). Claude fans out parallel
+	// fetch_weather tool calls, so we derive the key from the request itself
+	// (concurrency-safe — no shared counter): the URL uniquely identifies the
+	// city = the reasoning intent. Same intent → same key → the SAME EIP-3009
+	// nonce, so a retry / "Regenerate" / multi-agent re-sign of that intent is
+	// rejected on-chain by the JPYC contract's `authorizationState`. The
+	// server's default-on store also replays the cached 200 for identical
+	// re-sends. (For strictly *ordered* steps, createIdempotencyKeyBuilder().next()
+	// is the alternative — but a monotonic counter is unsafe under parallel tool
+	// calls, which is exactly this agent's shape.)
+	idempotencyKeyFor: (input) => {
+		const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+		return deriveIdempotencyKey({ conversationId, stepId: url, intent: url });
 	},
 });
 
