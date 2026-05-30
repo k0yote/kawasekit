@@ -140,6 +140,7 @@
 		"m4:mainnet-self-settle": "tsx scripts/11-mainnet-self-settle.ts",
 		"m4:mainnet-session-flow": "tsx scripts/12-mainnet-session-flow.ts",
 		"m4:inspect-wallets": "tsx scripts/13-inspect-wallets.ts",
+		"m5:kairos-x402-self-settle": "tsx scripts/14-kairos-x402-self-settle.ts",
 		"cli": "tsx cli/index.ts"
 	},
 	"dependencies": {

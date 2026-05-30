@@ -44,6 +44,15 @@ out at the flat floor.
   verified on Polygon; Kaia's runs via Pimlico in a later phase (ZeroDev does not
   support Kaia).
 
+## Verified on-chain
+
+JPYC liveness was confirmed by a read-only `name()`/`symbol()` check on all new
+chains. **Kaia is verified end-to-end with a real-bullet settlement on Kairos**
+(`scripts/14-kairos-x402-self-settle.ts`): a JPYC `transferWithAuthorization`
+settled through the self-facilitator, tx
+[`0xe0a0…79c0`](https://kairos.kaiascan.io/tx/0xe0a0bfc75a447ff86c3502d49ff4e45cdf0396a1edd7eb5ed132dcb0130379c0).
+The other new chains are liveness-verified only.
+
 ## Docs / threats
 
 Threat 1.1 (cross-chain replay) now formally spans Polygon / Kaia / Avalanche /
