@@ -1,5 +1,83 @@
 # Changelog
 
+## 0.1.0-beta.4
+
+### Minor Changes
+
+- b5ffda5: # M5-3 — Kaia / Avalanche / Ethereum chain support + per-chain finality
+
+  kawasekit now ships chain configs for **all four JPYC mainnets** (Polygon, Kaia,
+  Avalanche, Ethereum) plus their testnets, and makes confirmation depth a
+  **per-chain property** instead of a Polygon-centric default.
+
+  ## New chains (`src/chains/`)
+
+  `kaia` (8217), `kairos` (1001), `avalanche` (43114), `avalancheFuji` (43113),
+  `ethereum` (1), `sepolia` (11155111) join `polygon` / `polygonAmoy`.
+  `SupportedChainId` and `getChain` / `isSupportedChainId` extend automatically.
+
+  JPYC uses the same address (`0xE7C3…c29`) on every supported chain, all
+  `isLive: true` — Kaia / Kairos / Avalanche / Fuji / Sepolia were confirmed by a
+  read-only on-chain check (`name()` == "JPY Coin", `symbol()` == "JPYC"); Polygon
+  / Amoy / Ethereum are established. (Real x402 settlement on the new chains is not
+  yet exercised — config + liveness only.)
+
+  ## Per-chain finality (config-as-data)
+
+  `KawaseChain` gains `defaultConfirmations` and `blockTimeMs`. `createSelfFacilitator`
+  now reads `chain.defaultConfirmations` rather than the binary `mainnet=4 /
+testnet=1` switch:
+  - Polygon `4` (probabilistic) · Kaia `1` (IBFT immediate finality) · Avalanche
+    `2` (Snowman) · Ethereum `32` (epoch finality).
+  - The old binary default would have **under-confirmed Ethereum** (4 blocks ≈
+    48 s, not finalised) — re-opening the settle-reorg gap (threat 2.8) there.
+
+  `receiptTimeoutMs` now **auto-sizes** to the depth via the new exported
+  `deriveReceiptTimeoutMs(chain, confirmations)` = `max(60_000, 15_000 +
+confirmations × blockTimeMs × 1.5)`. This preserves Polygon's 60 s default
+  exactly and gives Ethereum's 32-confirmation default ~10 min, so it does not time
+  out at the flat floor.
+
+  ## Scope
+  - The **x402 EOA-payer path** works on every chain where JPYC is live.
+  - The **smart-account path** (session keys, sponsored UserOps via ZeroDev) stays
+    verified on Polygon; Kaia's runs via Pimlico in a later phase (ZeroDev does not
+    support Kaia).
+
+  ## Verified on-chain
+
+  JPYC liveness was confirmed by a read-only `name()`/`symbol()` check on all new
+  chains. **Kaia is verified end-to-end with a real-bullet settlement on Kairos**
+  (`scripts/14-kairos-x402-self-settle.ts`): a JPYC `transferWithAuthorization`
+  settled through the self-facilitator, tx
+  [`0xe0a0…79c0`](https://kairos.kaiascan.io/tx/0xe0a0bfc75a447ff86c3502d49ff4e45cdf0396a1edd7eb5ed132dcb0130379c0).
+  The other new chains are liveness-verified only.
+
+  ## Docs / threats
+
+  Threat 1.1 (cross-chain replay) now formally spans Polygon / Kaia / Avalanche /
+  Ethereum; §6.6 and `docs/recipes/facilitator-finality-tuning.md` updated for the
+  per-chain model; README Supported Chains table refreshed. 10 new tests
+  (311 total).
+
+- 749e50b: # Redis IdempotencyStore adapter + Mastra idempotency example
+
+  `createRedisIdempotencyStore` (`kawasekit/idempotency/redis`) — a cross-replica
+  (Layer 3) durable backing store for the M5-1 reasoning-step idempotency layer.
+  - **Client-agnostic, no new dependency.** Pass a thin `IdempotencyRedisClient`
+    (an `eval` shim over your own `ioredis` / `node-redis` instance), so kawasekit
+    takes no Redis dependency and the operator owns the connection.
+  - **Atomic.** The race-free `begin` runs server-side in Redis via a Lua `eval`
+    (done-check + `SET NX` lease); expiry and crash recovery use Redis-native TTL.
+  - Pass it to `CreateX402HandlerParams.idempotency.store` to deduplicate identical
+    re-sent / concurrent paid requests across **all** server replicas — the
+    in-memory default is single-process.
+
+  The agent example (`examples/agent-x402-jpyc`) now wires reasoning-step
+  idempotency at the tool-execution boundary (`idempotencyKeyFor` +
+  `deriveIdempotencyKey`), deriving the key from the request intent so it is
+  concurrency-safe under the LLM's parallel tool calls.
+
 ## 0.1.0-beta.3
 
 ### Minor Changes

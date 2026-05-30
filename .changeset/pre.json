@@ -14,6 +14,8 @@
     "m3-x402-session-example",
     "m4-release",
     "m5-1-reasoning-step-idempotency",
-    "m5-2-max-amount-per-sign"
+    "m5-2-max-amount-per-sign",
+    "m5-3-multi-chain",
+    "m5-redis-idempotency-store"
   ]
 }
