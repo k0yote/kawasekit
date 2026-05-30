@@ -12,6 +12,8 @@
     "beta-0-review-closures",
     "m2-jpyc-transfer-policy",
     "m3-x402-session-example",
-    "m4-release"
+    "m4-release",
+    "m5-1-reasoning-step-idempotency",
+    "m5-2-max-amount-per-sign"
   ]
 }
