@@ -3,7 +3,7 @@
  *
  * Read-only inspection of every wallet kawasekit cares about. Reads the
  * private keys from `.env`, derives addresses (never logs the keys), and
- * queries POL + JPYC balances on the chosen chain. Useful for:
+ * queries native-gas + JPYC balances on the chosen chain. Useful for:
  *
  *   - Confirming funding before scripts/11 + scripts/12 mainnet runs
  *   - Spot-checking Amoy state during development
@@ -15,15 +15,18 @@
  * if provided).
  *
  * Required env:
- *   - KAWASEKIT_X402_CHAIN              "polygon" | "polygonAmoy"
+ *   - KAWASEKIT_X402_CHAIN   "polygon" | "polygonAmoy" | "kaia" | "kairos" |
+ *                            "avalanche" | "avalancheFuji" | "ethereum" | "sepolia"
  *
  * Optional env (any subset — script skips missing entries):
  *   - OWNER_PRIVATE_KEY                 Owner EOA + smart-account derivation
- *   - X402_PAYER_PRIVATE_KEY            x402 payer EOA (holds JPYC for scripts/11)
- *   - X402_FACILITATOR_PRIVATE_KEY      x402 facilitator EOA (holds POL for gas)
+ *                                       (ZeroDev chains only; on Kaia the
+ *                                       derivation warns and is skipped)
+ *   - X402_PAYER_PRIVATE_KEY            x402 payer EOA (holds JPYC)
+ *   - X402_FACILITATOR_PRIVATE_KEY      x402 facilitator EOA (holds native gas)
  *   - SESSION_KEY_PRIVATE_KEY           Legacy long-lived session key (M3 era)
- *   - POLYGON_RPC_URL                   Polygon mainnet RPC override
- *   - POLYGON_AMOY_RPC_URL              Polygon Amoy RPC override
+ *   - <CHAIN>_RPC_URL                   Per-chain RPC override, e.g. KAIROS_RPC_URL,
+ *                                       POLYGON_AMOY_RPC_URL, ETHEREUM_RPC_URL
  *
  * This script lives in scripts/ (not src/), so console output is intentional.
  */
@@ -35,7 +38,21 @@ import { createKernelAccount } from "@zerodev/sdk";
 import { getEntryPoint, KERNEL_V3_1 } from "@zerodev/sdk/constants";
 import { type Address, createPublicClient, formatEther, formatUnits, type Hex, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { getJpycAddress, JPYC_DECIMALS, jpycAbi, polygon, polygonAmoy } from "../src";
+import {
+	avalanche,
+	avalancheFuji,
+	ethereum,
+	getJpycAddress,
+	isSupportedChainId,
+	JPYC_DECIMALS,
+	jpycAbi,
+	type KawaseChain,
+	kaia,
+	kairos,
+	polygon,
+	polygonAmoy,
+	sepolia,
+} from "../src";
 
 function optionalEnv(name: string): string | undefined {
 	const value = process.env[name];
@@ -50,43 +67,46 @@ function asPrivateKey(name: string, value: string): Hex {
 }
 
 interface ChainProfile {
-	readonly chain: typeof polygon | typeof polygonAmoy;
+	readonly chain: KawaseChain;
 	readonly displayName: string;
 	readonly rpcUrl: string;
 	readonly explorerAddressBase: string;
 }
 
+/** Every kawasekit-supported chain, keyed by its `KAWASEKIT_X402_CHAIN` value,
+ *  with the optional per-chain RPC override env var. Config-as-data. */
+const CHAIN_PROFILES: Record<string, { readonly chain: KawaseChain; readonly rpcEnv: string }> = {
+	polygon: { chain: polygon, rpcEnv: "POLYGON_RPC_URL" },
+	polygonAmoy: { chain: polygonAmoy, rpcEnv: "POLYGON_AMOY_RPC_URL" },
+	kaia: { chain: kaia, rpcEnv: "KAIA_RPC_URL" },
+	kairos: { chain: kairos, rpcEnv: "KAIROS_RPC_URL" },
+	avalanche: { chain: avalanche, rpcEnv: "AVALANCHE_RPC_URL" },
+	avalancheFuji: { chain: avalancheFuji, rpcEnv: "AVALANCHE_FUJI_RPC_URL" },
+	ethereum: { chain: ethereum, rpcEnv: "ETHEREUM_RPC_URL" },
+	sepolia: { chain: sepolia, rpcEnv: "SEPOLIA_RPC_URL" },
+};
+
 function requireChainProfile(): ChainProfile {
 	const raw = optionalEnv("KAWASEKIT_X402_CHAIN");
-	if (raw === "polygon") {
-		const rpcUrl = optionalEnv("POLYGON_RPC_URL") ?? polygon.rpcUrls.default.http[0];
-		if (rpcUrl === undefined) {
-			throw new Error("polygon.rpcUrls.default.http[0] is undefined; set POLYGON_RPC_URL.");
-		}
-		return {
-			chain: polygon,
-			displayName: "Polygon mainnet (137)",
-			rpcUrl,
-			explorerAddressBase: "https://polygonscan.com/address/",
-		};
+	const entry = raw !== undefined ? CHAIN_PROFILES[raw] : undefined;
+	if (entry === undefined) {
+		const keys = Object.keys(CHAIN_PROFILES).join('" | "');
+		throw new Error(
+			`KAWASEKIT_X402_CHAIN must be one of "${keys}", got ${JSON.stringify(raw ?? "<missing>")}.`,
+		);
 	}
-	if (raw === "polygonAmoy") {
-		const rpcUrl = optionalEnv("POLYGON_AMOY_RPC_URL") ?? polygonAmoy.rpcUrls.default.http[0];
-		if (rpcUrl === undefined) {
-			throw new Error(
-				"polygonAmoy.rpcUrls.default.http[0] is undefined; set POLYGON_AMOY_RPC_URL.",
-			);
-		}
-		return {
-			chain: polygonAmoy,
-			displayName: "Polygon Amoy testnet (80002)",
-			rpcUrl,
-			explorerAddressBase: "https://amoy.polygonscan.com/address/",
-		};
+	const { chain, rpcEnv } = entry;
+	const rpcUrl = optionalEnv(rpcEnv) ?? chain.rpcUrls.default.http[0];
+	if (rpcUrl === undefined) {
+		throw new Error(`${chain.name} has no default RPC URL; set ${rpcEnv}.`);
 	}
-	throw new Error(
-		`KAWASEKIT_X402_CHAIN must be "polygon" (mainnet) or "polygonAmoy" (testnet), got ${JSON.stringify(raw ?? "<missing>")}.`,
-	);
+	const explorerBase = chain.blockExplorers?.default.url;
+	return {
+		chain,
+		displayName: `${chain.name} (${chain.id})`,
+		rpcUrl,
+		explorerAddressBase: explorerBase !== undefined ? `${explorerBase}/address/` : "",
+	};
 }
 
 interface InspectTarget {
@@ -124,7 +144,11 @@ async function main(): Promise<void> {
 		chain: profile.chain,
 		transport: http(profile.rpcUrl),
 	});
-	const jpycAddress = getJpycAddress(profile.chain.id);
+	const chainId = profile.chain.id;
+	if (!isSupportedChainId(chainId)) {
+		throw new Error(`${profile.displayName} is not a kawasekit-supported chain.`);
+	}
+	const jpycAddress = getJpycAddress(chainId);
 
 	console.log(`=== kawasekit wallet inspection on ${profile.displayName} ===\n`);
 	console.log("RPC:           ", profile.rpcUrl);
@@ -181,7 +205,7 @@ async function main(): Promise<void> {
 	console.log("\nQuerying balances...");
 
 	for (const target of targets) {
-		const [polWei, jpycWei] = await Promise.all([
+		const [gasWei, jpycWei] = await Promise.all([
 			publicClient.getBalance({ address: target.address }),
 			publicClient.readContract({
 				address: jpycAddress,
@@ -191,16 +215,19 @@ async function main(): Promise<void> {
 			}) as Promise<bigint>,
 		]);
 
-		const polHuman = formatEther(polWei);
+		const gasHuman = formatEther(gasWei);
 		const jpycHuman = formatUnits(jpycWei, JPYC_DECIMALS);
+		const gasLabel = `${profile.chain.nativeCurrency.symbol}:`.padEnd(9);
 
 		console.log(`\n${target.role}`);
 		console.log("  Address: ", target.address);
-		console.log("  Explorer:", `${profile.explorerAddressBase}${target.address}`);
+		if (profile.explorerAddressBase !== "") {
+			console.log("  Explorer:", `${profile.explorerAddressBase}${target.address}`);
+		}
 		if (target.note !== undefined) {
 			console.log("  Note:    ", target.note);
 		}
-		console.log("  POL:     ", polHuman.padStart(28), `  (${polWei.toString()} wei)`);
+		console.log(`  ${gasLabel}`, gasHuman.padStart(28), `  (${gasWei.toString()} wei)`);
 		console.log("  JPYC:    ", jpycHuman.padStart(28), `  (${jpycWei.toString()} wei)`);
 	}
 }
