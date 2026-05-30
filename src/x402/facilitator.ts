@@ -269,8 +269,8 @@ const RECEIPT_TIMEOUT_SLACK = 1.5;
  * operator does not pass one, so a deep-confirmation chain (Ethereum's `32` ×
  * ~12 s ≈ 10 min) does not time out at the flat 60 s floor, while shallow chains
  * (Polygon) keep the floor. Exposed so operators tuning `confirmations` per the
- * [finality recipe](../../docs/recipes/facilitator-finality-tuning.md) can
- * compute a matching timeout.
+ * finality recipe (`docs/recipes/facilitator-finality-tuning.md`) can compute a
+ * matching timeout.
  *
  * @example
  * ```ts

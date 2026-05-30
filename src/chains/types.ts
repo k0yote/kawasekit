@@ -10,8 +10,8 @@ import type { Chain } from "viem";
  *
  * `defaultConfirmations` / `blockTimeMs` are **config-as-data**: the facilitator
  * reads them instead of branching on chain identity, so finality depth is a
- * per-chain property rather than a code path (cf. the
- * [finality-tuning recipe](../../docs/recipes/facilitator-finality-tuning.md)).
+ * per-chain property rather than a code path (cf. the finality-tuning recipe at
+ * `docs/recipes/facilitator-finality-tuning.md`).
  *
  * @example
  * ```ts
