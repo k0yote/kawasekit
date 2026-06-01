@@ -90,6 +90,26 @@
 				"default": "./dist/session/index.cjs"
 			}
 		},
+		"./signer": {
+			"import": {
+				"types": "./dist/signer/index.d.ts",
+				"default": "./dist/signer/index.js"
+			},
+			"require": {
+				"types": "./dist/signer/index.d.cts",
+				"default": "./dist/signer/index.cjs"
+			}
+		},
+		"./policy": {
+			"import": {
+				"types": "./dist/policy/index.d.ts",
+				"default": "./dist/policy/index.js"
+			},
+			"require": {
+				"types": "./dist/policy/index.d.cts",
+				"default": "./dist/policy/index.cjs"
+			}
+		},
 		"./observability": {
 			"import": {
 				"types": "./dist/observability/index.d.ts",

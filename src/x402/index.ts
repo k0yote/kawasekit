@@ -34,7 +34,7 @@ export {
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./encoding";
-export { X402InvalidConfigError, X402InvalidPayloadError } from "./errors";
+export { X402InvalidConfigError, X402InvalidPayloadError, X402PolicyRejectedError } from "./errors";
 export {
 	/** @deprecated Renamed to `CreateHttpFacilitatorParams`. Removed in v0.2.0. */
 	type CreateCoinbaseFacilitatorParams,

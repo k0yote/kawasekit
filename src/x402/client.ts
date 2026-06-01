@@ -19,19 +19,17 @@
 import type { Account, Address } from "viem";
 import { getAddress, isAddress } from "viem";
 import { getChain, isSupportedChainId } from "../chains";
+import { assertNonBypassable } from "../signer/gate";
+import type { NonBypassableEnforcement, PaymentIntent, PolicyGatedSigner } from "../signer/types";
+import type { X402AssetParam, X402TokenDomain } from "../tokens/asset-domain";
+import { resolveAssetParam } from "../tokens/asset-domain";
 import {
 	authorizationDeadlineFromNow,
 	deriveAuthorizationNonce,
 	generateAuthorizationNonce,
 	signTransferWithAuthorization,
 } from "../tokens/eip3009";
-import {
-	getKnownAssetDomain,
-	type KnownAssetDomain,
-	type KnownAssetId,
-	listKnownAssetIds,
-} from "../tokens/known-assets";
-import { X402InvalidConfigError, X402InvalidPayloadError } from "./errors";
+import { X402InvalidPayloadError, X402PolicyRejectedError } from "./errors";
 import type {
 	X402ExactEvmPayload,
 	X402PaymentPayload,
@@ -57,51 +55,19 @@ export const X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS = 300;
 // Types
 // ---------------------------------------------------------------------------
 
-/** EIP-712 token domain `name` / `version` pair. */
-export interface X402TokenDomain {
-	readonly name: string;
-	readonly version: string;
-}
+// `X402TokenDomain` and `X402AssetParam` were lifted to `../tokens/asset-domain`
+// (M6-0) so the PolicyGatedSigner can reuse the same pinned-domain resolution.
+// Re-exported here for back-compat — consumers still import them from this module.
+export type { X402AssetParam, X402TokenDomain };
 
 /**
- * Asset binding for {@link createX402PaymentSigner}. Required, discriminated.
+ * Parameters for the `account` (EOA) variant of {@link createX402PaymentSigner}.
  *
- * **Default-on whitelist**: integrators MUST declare which asset they intend
- * to sign for. The `known` branch references a kawasekit-maintained
- * whitelist (see `src/tokens/known-assets.ts`); the `unsafeOverride` branch
- * is the deliberate escape hatch for any other asset and is named loudly so
- * it survives a code review. Either way, the signer pins the EIP-712 domain
- * at construction time and refuses to sign if `paymentRequirements.asset`
- * disagrees with the pinned `verifyingContract`.
- *
- * Closes Threat 1.4 (misadvertised EIP-712 domain): the server's advertised
- * `extra.name` / `extra.version` and `asset` are all ignored for signing
- * purposes — the signer trusts only what the integrator declared here.
+ * Kept as a named, extensible `interface` (consumers may `extends` /
+ * declaration-merge it). `maxAmountPerSign` pins the per-sign ceiling; for richer
+ * policy use the `signer` variant ({@link CreateX402PaymentSignerSignerParams}).
  */
-export type X402AssetParam =
-	| {
-			/** Use a kawasekit-maintained pinned EIP-712 domain. */
-			readonly kind: "known";
-			/** The asset id to pin. See {@link KnownAssetId} for the registry. */
-			readonly id: KnownAssetId;
-	  }
-	| {
-			/**
-			 * Use a caller-supplied EIP-712 domain for an asset NOT on the
-			 * kawasekit whitelist. The name is deliberately loud — pick this
-			 * branch only when you have separately audited the contract and its
-			 * `eip712Domain()` output.
-			 */
-			readonly kind: "unsafeOverride";
-			readonly domain: {
-				readonly name: string;
-				readonly version: string;
-				readonly verifyingContract: Address;
-			};
-	  };
-
-/** Parameters for {@link createX402PaymentSigner}. */
-export interface CreateX402PaymentSignerParams {
+export interface CreateX402PaymentSignerAccountParams {
 	/**
 	 * Declared production-vs-test intent. Each `sign()` call verifies that
 	 * `paymentRequirements.network` resolves to a chain whose `isTestnet`
@@ -146,7 +112,54 @@ export interface CreateX402PaymentSignerParams {
 	 * (backward-compatible default; the payer EOA balance is the only bound).
 	 */
 	readonly maxAmountPerSign?: bigint;
+	/** Discriminant: absent on this arm — use the `signer` variant for a PolicyGatedSigner. */
+	readonly signer?: never;
 }
+
+/**
+ * Parameters for the `signer` (PolicyGatedSigner) variant of
+ * {@link createX402PaymentSigner}. Drives signing through a
+ * {@link PolicyGatedSigner} (e.g. `createLocalPolicyGatedSigner`); the per-sign
+ * ceiling and richer policy live in the signer, so `maxAmountPerSign` is not
+ * accepted here.
+ */
+export interface CreateX402PaymentSignerSignerParams {
+	/** Declared production-vs-test intent (same semantics as the `account` variant). */
+	readonly network: "mainnet" | "testnet";
+	/** The policy-gated signer that produces the EIP-3009 authorization. */
+	readonly signer: PolicyGatedSigner;
+	/** Asset binding — pins the EIP-712 domain and cross-checks `paymentRequirements.asset`. */
+	readonly asset: X402AssetParam;
+	/**
+	 * Default authorization lifetime in seconds. Bounded per-sign by
+	 * `paymentRequirements.maxTimeoutSeconds`. Defaults to
+	 * {@link X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS}.
+	 */
+	readonly defaultLifetimeSeconds?: number;
+	/**
+	 * When set, asserts at construction that `signer` is non-bypassable
+	 * (`cryptographic` | `hardware`) — the runtime mirror of the
+	 * `requireNonBypassable` type-gate. Throws for an advisory signer.
+	 */
+	readonly requireEnforcement?: NonBypassableEnforcement;
+	/** Discriminant: absent on this arm. */
+	readonly account?: never;
+	/** Subsumed by the signer's policy; not accepted on this arm. */
+	readonly maxAmountPerSign?: never;
+}
+
+/**
+ * Parameters for {@link createX402PaymentSigner} — a discriminated union of the
+ * `account` (EOA) and `signer` (PolicyGatedSigner) variants.
+ *
+ * NOTE: type-level breaking change from the original `interface` (a union cannot
+ * be `extends`-ed). Existing `{ account, asset, network }` callers are
+ * value-assignable to the `account` arm and unaffected; consumers who `extends`
+ * / declaration-merge should use {@link CreateX402PaymentSignerAccountParams}.
+ */
+export type CreateX402PaymentSignerParams =
+	| CreateX402PaymentSignerAccountParams
+	| CreateX402PaymentSignerSignerParams;
 
 /** Parameters for {@link X402PaymentSigner.sign}. */
 export interface SignX402PaymentParams {
@@ -214,65 +227,6 @@ function assertAddress(value: string, field: string): Address {
 	return value as Address;
 }
 
-/** Construction-time resolution of an {@link X402AssetParam} to a pinned domain. */
-interface ResolvedAsset {
-	readonly name: string;
-	readonly version: string;
-	readonly verifyingContract: Address;
-}
-
-function resolveAssetParam(asset: X402AssetParam): ResolvedAsset {
-	if (asset.kind === "known") {
-		const entry: KnownAssetDomain | undefined = getKnownAssetDomain(asset.id);
-		if (entry === undefined) {
-			throw new X402InvalidConfigError(
-				"asset.id",
-				`unknown asset id ${JSON.stringify(asset.id)}. Supported: ${listKnownAssetIds()
-					.map((id) => JSON.stringify(id))
-					.join(", ")}.`,
-			);
-		}
-		return {
-			name: entry.name,
-			version: entry.version,
-			verifyingContract: entry.verifyingContract,
-		};
-	}
-	if (asset.kind === "unsafeOverride") {
-		const { domain } = asset;
-		if (typeof domain.name !== "string" || domain.name === "") {
-			throw new X402InvalidConfigError(
-				"asset.domain.name",
-				"`unsafeOverride.domain.name` must be a non-empty string",
-			);
-		}
-		if (typeof domain.version !== "string" || domain.version === "") {
-			throw new X402InvalidConfigError(
-				"asset.domain.version",
-				"`unsafeOverride.domain.version` must be a non-empty string",
-			);
-		}
-		if (!isAddress(domain.verifyingContract, { strict: false })) {
-			throw new X402InvalidConfigError(
-				"asset.domain.verifyingContract",
-				`\`unsafeOverride.domain.verifyingContract\` must be a valid address, got ${JSON.stringify(domain.verifyingContract)}`,
-			);
-		}
-		return {
-			name: domain.name,
-			version: domain.version,
-			verifyingContract: getAddress(domain.verifyingContract),
-		};
-	}
-	// Defensive: TS exhaustiveness guarantees this is unreachable at compile
-	// time, but a JS consumer could smuggle through an unknown kind.
-	const exhaustive = asset as { kind: string };
-	throw new X402InvalidConfigError(
-		"asset.kind",
-		`unsupported kind ${JSON.stringify(exhaustive.kind)}. Expected "known" or "unsafeOverride".`,
-	);
-}
-
 function validateRequirements(requirements: X402PaymentRequirements): {
 	readonly chainId: number;
 	readonly value: bigint;
@@ -337,6 +291,9 @@ function validateRequirements(requirements: X402PaymentRequirements): {
  * ```
  */
 export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): X402PaymentSigner {
+	if (params.signer !== undefined) {
+		return createSignerBackedX402PaymentSigner(params);
+	}
 	const { account, network } = params;
 	const defaultLifetimeSeconds =
 		params.defaultLifetimeSeconds ?? X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS;
@@ -434,6 +391,123 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 					validAfter: signed.message.validAfter.toString(),
 					validBefore: signed.message.validBefore.toString(),
 					nonce: signed.message.nonce,
+				},
+			};
+
+			const result: X402PaymentPayload = signParams.resource
+				? {
+						x402Version: X402_VERSION,
+						resource: signParams.resource,
+						accepted: paymentRequirements,
+						payload: { ...payload },
+					}
+				: {
+						x402Version: X402_VERSION,
+						accepted: paymentRequirements,
+						payload: { ...payload },
+					};
+			return result;
+		},
+	};
+}
+
+/**
+ * The `signer` (PolicyGatedSigner) variant of {@link createX402PaymentSigner}.
+ *
+ * Shares the `account` path's validate / network / asset-pin / window / nonce
+ * prologue (kept in sync deliberately — the two security checks must not drift),
+ * then routes the EIP-3009 signing through the {@link PolicyGatedSigner}. A
+ * policy denial (`sign()` → `{ ok: false }`) surfaces as a thrown
+ * {@link X402PolicyRejectedError}, so the `X402PaymentSigner.sign()` contract is
+ * unchanged (returns a payload or throws). The per-sign ceiling is the signer's
+ * policy, so there is no `maxAmountPerSign` check here.
+ */
+function createSignerBackedX402PaymentSigner(
+	params: CreateX402PaymentSignerSignerParams,
+): X402PaymentSigner {
+	const { signer, network } = params;
+	const defaultLifetimeSeconds =
+		params.defaultLifetimeSeconds ?? X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS;
+	if (defaultLifetimeSeconds <= 0) {
+		throw new X402InvalidPayloadError(
+			"X402PaymentSignerConfig",
+			`\`defaultLifetimeSeconds\` must be positive, got ${defaultLifetimeSeconds}`,
+		);
+	}
+	if (params.requireEnforcement !== undefined) {
+		assertNonBypassable(signer);
+	}
+	const pinnedDomain = resolveAssetParam(params.asset);
+	const from = signer.from;
+
+	return {
+		address: from,
+		async sign(signParams) {
+			const { paymentRequirements } = signParams;
+			const { chainId, value, asset, payTo } = validateRequirements(paymentRequirements);
+			const chain = getChain(chainId);
+			if (network === "mainnet" && chain.isTestnet) {
+				throw new X402InvalidPayloadError(
+					"PaymentRequirements",
+					`signer was configured for network="mainnet" but requirements.network="${paymentRequirements.network}" (chainId ${chainId}) is a testnet`,
+				);
+			}
+			if (network === "testnet" && !chain.isTestnet) {
+				throw new X402InvalidPayloadError(
+					"PaymentRequirements",
+					`signer was configured for network="testnet" but requirements.network="${paymentRequirements.network}" (chainId ${chainId}) is a mainnet — refusing to sign payment for real funds`,
+				);
+			}
+			if (getAddress(asset) !== pinnedDomain.verifyingContract) {
+				throw new X402InvalidPayloadError(
+					"PaymentRequirements",
+					`requirements.asset (${getAddress(asset)}) does not match the signer's pinned verifyingContract (${pinnedDomain.verifyingContract}) — refusing to sign for an asset the signer was not configured to handle`,
+				);
+			}
+
+			const lifetime = Math.min(defaultLifetimeSeconds, paymentRequirements.maxTimeoutSeconds);
+			const validAfter = signParams.validAfter ?? 0n;
+			const validBefore = signParams.validBefore ?? authorizationDeadlineFromNow(lifetime);
+			if (validBefore <= validAfter) {
+				throw new X402InvalidPayloadError(
+					"PaymentRequirements",
+					`\`validBefore\` (${validBefore}) must be greater than \`validAfter\` (${validAfter})`,
+				);
+			}
+
+			const nonce =
+				signParams.idempotencyKey !== undefined
+					? deriveAuthorizationNonce(
+							{ idempotencyKey: signParams.idempotencyKey },
+							{ from, verifyingContract: pinnedDomain.verifyingContract, chainId },
+						)
+					: generateAuthorizationNonce();
+
+			const intent: PaymentIntent = {
+				token: pinnedDomain.verifyingContract,
+				chainId,
+				from,
+				to: payTo,
+				value,
+				validAfter,
+				validBefore,
+				nonce,
+			};
+
+			const signResult = await signer.sign(intent);
+			if (!signResult.ok) {
+				throw new X402PolicyRejectedError(signResult.rejection);
+			}
+
+			const payload: X402ExactEvmPayload = {
+				signature: signResult.signature,
+				authorization: {
+					from,
+					to: payTo,
+					value: value.toString(),
+					validAfter: validAfter.toString(),
+					validBefore: validBefore.toString(),
+					nonce,
 				},
 			};
 
