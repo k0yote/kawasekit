@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | M6-0 |
 | **Title** | PolicyGatedSigner — a signing seam where the enforcement *strength* is a first-class, type-visible property |
-| **Status** | Draft v3 — **M6-0 implemented + merged**. Sprint 1 (C1 + H1–H3) + M2 + M3 + L2 applied; M1 resolved in implementation (throw at the x402 boundary via `X402PolicyRejectedError`, typed `SignResult` at the signer boundary). Remaining: L1 (a one-line §2.1 note that `onPayment` is already required-at-type-level) — cosmetic. |
+| **Status** | Draft v3 — **M6-0 implemented + merged; all `web3-cto-review` pass-1 findings closed** (C1 + H1–H3 + M1–M3 + L1–L2). M1 resolved in implementation (throw at the x402 boundary via `X402PolicyRejectedError`, typed `SignResult` at the signer boundary). |
 | **Author** | k0yote |
 | **Reviewers (invited)** | `web3-cto-review` skill (mandatory pass; §8 TSS section applies to the mpc-2p adapter, not to this M6-0 slice) |
 | **Milestone** | M6-0 (Must / baseline — mechanism-independent, parallel-safe with the `0.1.0` GA soak) |
@@ -108,6 +108,13 @@ payment" — when their security properties are opposite.
 |---|---|---|---|
 | `maxAmountPerSign` ceiling | inside `sign()` — `src/x402/client.ts:382-387` | **No** — the agent must call `sign()` to get a signature, and the check precedes the signature | M5-2, threat 1.14 → `⚠️ (with SDK affordance)` |
 | `onPayment` guard | inside `wrapFetch()` — `src/x402/fetch.ts:85-88`, called at `:221` | **Yes** — `wrapFetch` is optional; `signer.sign()` is public and callable directly (`src/x402/fetch.ts:326-336`) | H1 |
+
+(Precision, L1: `onPayment` is itself **required at the type level** within
+`wrapFetch` — `src/x402/fetch.ts:78`, which "refuses to default to 'always pay'
+silently" — so it is not an omittable field. The residual H1 is narrower: `wrapFetch`
+*itself* is optional, and a caller holding the signer can call `sign()` directly
+(`:326-336`), never reaching the guard. M6-0 targets exactly that residual by moving
+enforcement into the signing primitive.)
 
 The asymmetry is the whole problem: a reader of the public API cannot tell, from
 the types, that `onPayment` is a *suggestion* and `maxAmountPerSign` is a *rule*.
