@@ -49,6 +49,7 @@ function localSigner(maxPerSign: bigint) {
 		policy: createSpendingPolicy({
 			session: { id: "conv-1", notAfter: 2_000_000_000n },
 			perToken: [{ token: TOKEN, maxPerSign }],
+			recipientAllowlist: "any",
 		}),
 		asset: ASSET,
 		acknowledgeAdvisory: true,

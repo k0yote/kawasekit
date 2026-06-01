@@ -41,6 +41,7 @@ function policy(
 	return createSpendingPolicy({
 		session: { id: "s", notAfter: over.notAfter ?? 2_000_000_000n },
 		perToken: [{ token: TOKEN, maxPerSign: over.maxPerSign ?? 1000n }],
+		recipientAllowlist: "any",
 		revoked: over.revoked ?? false,
 	});
 }

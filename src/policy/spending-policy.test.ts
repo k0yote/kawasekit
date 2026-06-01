@@ -39,6 +39,7 @@ function policy(over: Partial<SpendingPolicy> = {}): SpendingPolicy {
 		version: "1",
 		session: { id: "sess-1", notAfter: 2_000_000_000n },
 		perToken: [{ token: TOKEN, maxPerSign: 1000n, cumulativeCap: 5000n }],
+		recipientAllowlist: "any",
 		revoked: false,
 		...over,
 	};
@@ -69,10 +70,15 @@ describe("evaluateSpendingPolicy — allow", () => {
 		).toEqual({ ok: true });
 	});
 
-	it("undefined recipientAllowlist allows any recipient", () => {
-		expect(evaluateSpendingPolicy(policy(), intent({ to: OTHER_TO }), EMPTY_STATE, NOW)).toEqual({
-			ok: true,
-		});
+	it('"any" recipientAllowlist allows any recipient', () => {
+		expect(
+			evaluateSpendingPolicy(
+				policy({ recipientAllowlist: "any" }),
+				intent({ to: OTHER_TO }),
+				EMPTY_STATE,
+				NOW,
+			),
+		).toEqual({ ok: true });
 	});
 
 	it("matches token/recipient regardless of address checksum casing", () => {
@@ -154,6 +160,7 @@ describe("createSpendingPolicy — validation", () => {
 	const base = {
 		session: { id: "s", notAfter: 2_000_000_000n },
 		perToken: [{ token: TOKEN, maxPerSign: 1000n }],
+		recipientAllowlist: "any" as const,
 	};
 
 	it("normalizes addresses to checksum", () => {

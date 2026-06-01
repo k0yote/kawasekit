@@ -13,6 +13,7 @@ const account = privateKeyToAccount(
 const policy = createSpendingPolicy({
 	session: { id: "s", notAfter: 2_000_000_000n },
 	perToken: [{ token: JPYC_V2_ADDRESS, maxPerSign: 1000n }],
+	recipientAllowlist: "any",
 });
 const local = createLocalPolicyGatedSigner({
 	account,

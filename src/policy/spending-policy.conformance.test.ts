@@ -26,7 +26,7 @@ interface VectorJson {
 			readonly maxPerSign: string;
 			readonly cumulativeCap?: string;
 		}>;
-		readonly recipientAllowlist: readonly string[] | null;
+		readonly recipientAllowlist: readonly string[] | "any";
 		readonly revoked: boolean;
 	};
 	readonly intent: {
@@ -58,9 +58,8 @@ function parsePolicy(p: VectorJson["policy"]): SpendingPolicy {
 		version: "1",
 		session: { id: p.session.id, notAfter: BigInt(p.session.notAfter) },
 		perToken,
-		...(p.recipientAllowlist !== null
-			? { recipientAllowlist: p.recipientAllowlist.map((a) => getAddress(a)) }
-			: {}),
+		recipientAllowlist:
+			p.recipientAllowlist === "any" ? "any" : p.recipientAllowlist.map((a) => getAddress(a)),
 		revoked: p.revoked,
 	};
 }

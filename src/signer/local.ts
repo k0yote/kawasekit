@@ -55,7 +55,7 @@ export interface CreateLocalPolicyGatedSignerParams {
  * ```ts
  * const signer = createLocalPolicyGatedSigner({
  *   account,
- *   policy: createSpendingPolicy({ session: { id, notAfter }, perToken: [{ token: JPYC, maxPerSign: 1_000n }] }),
+ *   policy: createSpendingPolicy({ session: { id, notAfter }, perToken: [{ token: JPYC, maxPerSign: 1_000n }], recipientAllowlist: "any" }),
  *   asset: { kind: "known", id: "jpyc-v2" },
  *   acknowledgeAdvisory: true,
  * });

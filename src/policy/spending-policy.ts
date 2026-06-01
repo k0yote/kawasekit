@@ -33,17 +33,22 @@ export interface TokenLimit {
 }
 
 /**
- * Policy-as-data evaluated for every {@link PaymentIntent}. Deny-closed: a token
- * not listed in `perToken` is rejected, and (per RFC) an absent
- * `recipientAllowlist` means *any* recipient while `[]` means deny-all.
+ * Policy-as-data evaluated for every {@link PaymentIntent}. Deny-closed
+ * throughout: a token not listed in `perToken` is rejected, and
+ * `recipientAllowlist` is **required** — `"any"` (unrestricted) is a conscious,
+ * greppable choice, never a silent default.
  */
 export interface SpendingPolicy {
 	readonly version: "1";
 	/** Session id + expiry (unix seconds). An authorization may not outlive the session. */
 	readonly session: { readonly id: string; readonly notAfter: bigint };
 	readonly perToken: readonly TokenLimit[];
-	/** `undefined` = any recipient; `[]` = deny-all; otherwise an allowlist. */
-	readonly recipientAllowlist?: readonly Address[];
+	/**
+	 * Recipient restriction (**required** — no silent allow-open default):
+	 * `"any"` = unrestricted, `[]` = deny-all, `[...]` = allowlist. Making
+	 * `"any"` explicit keeps the policy deny-closed like `perToken`.
+	 */
+	readonly recipientAllowlist: readonly Address[] | "any";
 	readonly revoked: boolean;
 }
 
@@ -118,7 +123,7 @@ export function evaluateSpendingPolicy(
 		return deny("token_not_allowed", `token ${intentToken} is not in the policy`);
 	}
 
-	if (policy.recipientAllowlist !== undefined) {
+	if (policy.recipientAllowlist !== "any") {
 		const to = getAddress(intent.to);
 		const allowed = policy.recipientAllowlist.some((a) => getAddress(a) === to);
 		if (!allowed) {
@@ -150,7 +155,8 @@ export function evaluateSpendingPolicy(
 export interface CreateSpendingPolicyParams {
 	readonly session: { readonly id: string; readonly notAfter: bigint };
 	readonly perToken: readonly TokenLimit[];
-	readonly recipientAllowlist?: readonly Address[];
+	/** Required: `"any"` (unrestricted), `[]` (deny-all), or an allowlist. No silent default. */
+	readonly recipientAllowlist: readonly Address[] | "any";
 	/** Defaults to `false`. */
 	readonly revoked?: boolean;
 }
@@ -218,13 +224,16 @@ export function createSpendingPolicy(params: CreateSpendingPolicyParams): Spendi
 		return { token, maxPerSign: l.maxPerSign };
 	});
 
-	const recipientAllowlist = params.recipientAllowlist?.map((a) => getAddress(a));
+	const recipientAllowlist =
+		params.recipientAllowlist === "any"
+			? "any"
+			: params.recipientAllowlist.map((a) => getAddress(a));
 
 	return {
 		version: "1",
 		session: { id: params.session.id, notAfter: params.session.notAfter },
 		perToken,
-		...(recipientAllowlist !== undefined ? { recipientAllowlist } : {}),
+		recipientAllowlist,
 		revoked: params.revoked ?? false,
 	};
 }
