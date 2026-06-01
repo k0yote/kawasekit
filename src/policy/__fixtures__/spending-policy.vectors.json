@@ -3,7 +3,7 @@
 	"encoding": {
 		"bigint": "decimal-string",
 		"address": "eip55-checksummed",
-		"recipientAllowlist": "null = any recipient; [] = deny-all; else allowlist",
+		"recipientAllowlist": "\"any\" = any recipient; [] = deny-all; else allowlist",
 		"expected": "only { ok } or { ok:false, reason } is conformance-bound; detail strings are not",
 		"note": "Shared corpus for the SDK (TS) evaluator and the mpc-2p backend (Go) port. Evaluator-level reasons only — adapter-level reasons (from_mismatch, intent_digest_mismatch, unauthenticated) are out of scope."
 	},
@@ -20,7 +20,7 @@
 						"cumulativeCap": "5000"
 					}
 				],
-				"recipientAllowlist": null,
+				"recipientAllowlist": "any",
 				"revoked": false
 			},
 			"intent": {
@@ -45,7 +45,7 @@
 				"perToken": [
 					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
 				],
-				"recipientAllowlist": null,
+				"recipientAllowlist": "any",
 				"revoked": false
 			},
 			"intent": {
@@ -74,7 +74,7 @@
 						"cumulativeCap": "5000"
 					}
 				],
-				"recipientAllowlist": null,
+				"recipientAllowlist": "any",
 				"revoked": false
 			},
 			"intent": {
@@ -128,7 +128,7 @@
 				"perToken": [
 					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
 				],
-				"recipientAllowlist": null,
+				"recipientAllowlist": "any",
 				"revoked": true
 			},
 			"intent": {
@@ -153,7 +153,7 @@
 				"perToken": [
 					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
 				],
-				"recipientAllowlist": null,
+				"recipientAllowlist": "any",
 				"revoked": false
 			},
 			"intent": {
@@ -178,7 +178,7 @@
 				"perToken": [
 					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
 				],
-				"recipientAllowlist": null,
+				"recipientAllowlist": "any",
 				"revoked": false
 			},
 			"intent": {
@@ -203,7 +203,7 @@
 				"perToken": [
 					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
 				],
-				"recipientAllowlist": null,
+				"recipientAllowlist": "any",
 				"revoked": false
 			},
 			"intent": {
@@ -278,7 +278,7 @@
 				"perToken": [
 					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
 				],
-				"recipientAllowlist": null,
+				"recipientAllowlist": "any",
 				"revoked": false
 			},
 			"intent": {
@@ -307,7 +307,7 @@
 						"cumulativeCap": "5000"
 					}
 				],
-				"recipientAllowlist": null,
+				"recipientAllowlist": "any",
 				"revoked": false
 			},
 			"intent": {

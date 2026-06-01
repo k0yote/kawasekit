@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | M6-0 |
 | **Title** | PolicyGatedSigner — a signing seam where the enforcement *strength* is a first-class, type-visible property |
-| **Status** | Draft v2 — revised per `web3-cto-review` pass 1 (**C1 + H1–H3 applied**; M1–M3 / L1–L2 pending). Awaiting Sprint 2–3 + user review before M6-0 implementation. |
+| **Status** | Draft v3 — **M6-0 implemented + merged**. Sprint 1 (C1 + H1–H3) + M2 + M3 + L2 applied; M1 resolved in implementation (throw at the x402 boundary via `X402PolicyRejectedError`, typed `SignResult` at the signer boundary). Remaining: L1 (a one-line §2.1 note that `onPayment` is already required-at-type-level) — cosmetic. |
 | **Author** | k0yote |
 | **Reviewers (invited)** | `web3-cto-review` skill (mandatory pass; §8 TSS section applies to the mpc-2p adapter, not to this M6-0 slice) |
 | **Milestone** | M6-0 (Must / baseline — mechanism-independent, parallel-safe with the `0.1.0` GA soak) |
@@ -17,12 +17,11 @@
 > implementation, per the M6 kickoff (`.claude/m6-kickoff.md` §10: "design-first —
 > RFC → web3-cto-review → 実装"). Implementation of the M6-0 slice touches
 > `src/policy/` and adds `src/signer/`, so it additionally goes through Plan Mode
-> (`CLAUDE.md` Design Review Discipline). `file:line` citations were verified
-> against the working tree at v1 writing, and the §4.5 type-gate was additionally
-> compiled with `tsc --strict` during `web3-cto-review` pass 1 (confirmed). A full
-> known-stale `:354` anchor is corrected to `:389-391` (verified in pass 1); a full
-> Appendix B re-verification sweep of the remaining anchors is the pending L2 item
-> (Sprint 3).
+> (`CLAUDE.md` Design Review Discipline). The design passed `web3-cto-review` pass 1
+> (Sprint 1 C1 + H1–H3 applied); the §4.5 type-gate was compiled with `tsc --strict`
+> (confirmed). **M6-0 is now implemented and merged** — Appendix B `file:line` anchors
+> have been **re-verified against the implemented tree** (L2 done), and
+> `recipientAllowlist` was tightened to required `| "any"` (M2 done).
 
 ---
 
@@ -281,7 +280,8 @@ sign the resulting digest; it MUST NOT accept or sign a pre-computed digest. The
 EIP-712 **domain** `{name, version, chainId, verifyingContract}` is completed by
 resolving `{name, version}` from a **trusted, pinned `(token, chainId) → (name,
 version)` config** — mirroring how the current signer pins via `resolveAssetParam`
-(`src/x402/client.ts:217-224`, used at `:356` / `:413-414`) — and **never** from the
+(`src/tokens/asset-domain.ts:85`, lifted from `client.ts` in M6-0 and reused by both
+sign paths) — and **never** from the
 advertised `requirements.extra` (`src/x402/types.ts:124-126`), which is untrusted
 producer input. The adapter MUST additionally **reject** an intent whose `token` ≠
 the signer's pinned `verifyingContract`, carrying forward the existing
@@ -305,8 +305,8 @@ export interface SpendingPolicy {
   readonly session: { readonly id: string; readonly notAfter: bigint }; // expiry (unix s)
   /** Per-token limits. A token absent from the map is NOT allowed (closed by default). */
   readonly perToken: readonly TokenLimit[];
-  /** undefined = any recipient; [] = no recipient (deny-all); else allowlist. */
-  readonly recipientAllowlist?: readonly Address[];
+  /** Required (no silent allow-open, M2): "any" = unrestricted, [] = deny-all, [...] = allowlist. */
+  readonly recipientAllowlist: readonly Address[] | "any";
   readonly revoked: boolean;
 }
 export interface TokenLimit {
@@ -340,8 +340,8 @@ Evaluation order (deny-closed; first failing check wins):
 3. `intent.validBefore > session.notAfter` → `expired` (the authorization must not
    outlive the session)
 4. token not in `perToken` → `token_not_allowed`
-5. `recipientAllowlist` present and `intent.to` not in it (compare via
-   `getAddress`) → `recipient_not_allowed`
+5. `recipientAllowlist !== "any"` and `intent.to` not in it (compare via
+   `getAddress`; `[]` = deny-all) → `recipient_not_allowed`
 6. `intent.value > limit.maxPerSign` → `amount_exceeds_per_sign`
 7. `spent(token) + intent.value > limit.cumulativeCap` → `amount_exceeds_cumulative`
 8. else `{ ok: true }`
@@ -643,7 +643,7 @@ move them alone (2-of-2).
    the encoding spec; the Go side joins the corpus at M6-2.
 2. **Evaluator unit matrix.** Each rejection reason + each boundary
    (`value == maxPerSign`, `spent+value == cumulativeCap`,
-   `validBefore == session.notAfter`, empty vs undefined allowlist, address
+   `validBefore == session.notAfter`, `[]` (deny-all) vs `"any"` allowlist, address
    checksum mismatch) has a colocated `*.test.ts`.
 3. **Type-gate test (both directions).** A `// @ts-expect-error` asserting
    `requireNonBypassable(localSigner)` does **not** compile (the *negative*
@@ -785,7 +785,7 @@ export interface SpendingPolicy {
   readonly version: "1";
   readonly session: { readonly id: string; readonly notAfter: bigint };
   readonly perToken: readonly TokenLimit[];
-  readonly recipientAllowlist?: readonly Address[];
+  readonly recipientAllowlist: readonly Address[] | "any";
   readonly revoked: boolean;
 }
 export interface SpendState { readonly spentPerToken: readonly { token: Address; spent: bigint }[]; }
@@ -799,14 +799,19 @@ export function createSpendingPolicy(p: /* validated init */ unknown): SpendingP
 
 ## Appendix B — verified source anchors
 
-| Claim | Anchor |
+Anchors **re-verified against the implemented tree** (current `main`, post-M6-0;
+L2). Line numbers shifted from v1 where M6-0 added code; `resolveAssetParam` was
+lifted to `src/tokens/asset-domain.ts`; `PaymentIntent` now exists.
+
+| Claim | Anchor (current `main`) |
 |---|---|
-| `createX402PaymentSigner` factory + params | `src/x402/client.ts:339-455`, params `:104-149`, `account:Account` `:118` |
+| `createX402PaymentSigner` factory (branches account / signer) | `src/x402/client.ts:293`; account-arm `CreateX402PaymentSignerAccountParams` `:70`, signer-arm `CreateX402PaymentSignerSignerParams` `:126`; `account:Account` `:84` |
 | viem `Account` import | `src/x402/client.ts:19` |
-| `maxAmountPerSign` ceiling — **non-bypassable**, inside `sign()`, throws | `src/x402/client.ts:382-387` (throw `:383`) |
-| `validBefore` from `Date.now()` window | `src/x402/client.ts:389-391` |
-| EIP-3009 signature production in the signer | `src/x402/client.ts:410-426` |
+| `maxAmountPerSign` ceiling — **non-bypassable**, inside `sign()`, throws (account path) | `src/x402/client.ts:339` |
+| `validBefore` from `Date.now()` window (account path) | `src/x402/client.ts:346-348` |
+| EIP-3009 signature production in the signer (account path) | `src/x402/client.ts:367-385` |
 | `onPayment` guard — **bypassable**, advisory | `src/x402/fetch.ts:85-88`; `WrapFetchParams` `:51-110`; invoked only at `:221`; direct-`sign()` bypass example `:326-336` |
+| asset-domain pinning (`X402AssetParam` / `resolveAssetParam`, **lifted M6-0**) | `src/tokens/asset-domain.ts:50` / `:85`; `ResolvedAsset` `:73`; re-exported from `src/x402/client.ts:61` |
 | `TransferWithAuthorizationMessage` (intent fields) | `src/tokens/eip3009.ts:40-48` |
 | EIP-712 `TransferWithAuthorization` type | `src/tokens/eip3009.ts:76-85` |
 | `generateAuthorizationNonce` (random) | `src/tokens/eip3009.ts:122-126` |
@@ -814,7 +819,7 @@ export function createSpendingPolicy(p: /* validated init */ unknown): SpendingP
 | `signTransferWithAuthorization` (builds typed data from fields, never a digest) | `src/tokens/eip3009.ts:246-260` |
 | `requireSignTypedData(account)` capability check | `src/tokens/eip3009.ts:193` |
 | `X402PaymentRequirements` (advertised wire shape → intent fields) | `src/x402/types.ts:128-136` |
-| existing policy is ZeroDev smart-account path (sibling, not replaced) | `src/policy/daily-limit.ts:70-110` |
-| export-subpath convention (`./x402` `./session` `./idempotency` `./idempotency/redis` `./observability`) | `package.json#exports` |
-| no `PaymentIntent` type exists today | (verified absent — `src/x402/types.ts`, `src/tokens/eip3009.ts`) |
+| ZeroDev smart-account policy (sibling, not replaced) | `src/policy/daily-limit.ts:70-110` |
+| `PaymentIntent` type — **shipped by M6-0** (no longer absent) | `src/signer/types.ts:57` |
+| export-subpath convention (now incl. `./signer` `./policy`) | `package.json#exports` (`./signer`, `./policy` added) |
 | design-first + Plan Mode obligation for `src/policy/` | `CLAUDE.md` Design Review Discipline; spec `.claude/m6-kickoff.md` §3–§8 |
