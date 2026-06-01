@@ -17,6 +17,7 @@
     "m5-2-max-amount-per-sign",
     "m5-3-multi-chain",
     "m5-redis-idempotency-store",
-    "m6-0-policy-gated-signer"
+    "m6-0-policy-gated-signer",
+    "m6-0-recipient-allowlist-required"
   ]
 }
