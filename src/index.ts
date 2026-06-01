@@ -42,6 +42,32 @@ export {
 	ONE_DAY_SECONDS,
 } from "./policy/daily-limit";
 export {
+	type CreateSpendingPolicyParams,
+	createSpendingPolicy,
+	evaluateSpendingPolicy,
+	mergeSpendState,
+	type PolicyDecision,
+	type SpendingPolicy,
+	SpendingPolicyConfigError,
+	type SpendState,
+	type TokenLimit,
+} from "./policy/spending-policy";
+export { PolicyGatedSignerConfigError } from "./signer/errors";
+export { assertNonBypassable, requireNonBypassable } from "./signer/gate";
+export {
+	type CreateLocalPolicyGatedSignerParams,
+	createLocalPolicyGatedSigner,
+} from "./signer/local";
+export type {
+	EnforcementLevel,
+	NonBypassableEnforcement,
+	PaymentIntent,
+	PolicyGatedSigner,
+	PolicyRejection,
+	SignerDescription,
+	SignResult,
+} from "./signer/types";
+export {
 	authorizationDeadlineFromNow,
 	type CancelAuthorizationMessage,
 	deriveAuthorizationNonce,
@@ -96,7 +122,11 @@ export {
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./x402/encoding";
-export { X402InvalidConfigError, X402InvalidPayloadError } from "./x402/errors";
+export {
+	X402InvalidConfigError,
+	X402InvalidPayloadError,
+	X402PolicyRejectedError,
+} from "./x402/errors";
 export {
 	/** @deprecated Renamed to `CreateHttpFacilitatorParams`. Removed in v0.2.0. */
 	type CreateCoinbaseFacilitatorParams,

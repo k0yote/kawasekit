@@ -25,6 +25,8 @@ export default defineConfig({
 		"x402/index": "src/x402/index.ts",
 		"x402/hono/index": "src/x402/hono/index.ts",
 		"session/index": "src/session/index.ts",
+		"signer/index": "src/signer/index.ts",
+		"policy/index": "src/policy/index.ts",
 		"observability/index": "src/observability/index.ts",
 		"observability/prometheus/index": "src/observability/prometheus/index.ts",
 		"observability/otlp/index": "src/observability/otlp/index.ts",

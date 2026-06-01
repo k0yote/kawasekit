@@ -1,0 +1,332 @@
+{
+	"version": "1",
+	"encoding": {
+		"bigint": "decimal-string",
+		"address": "eip55-checksummed",
+		"recipientAllowlist": "null = any recipient; [] = deny-all; else allowlist",
+		"expected": "only { ok } or { ok:false, reason } is conformance-bound; detail strings are not",
+		"note": "Shared corpus for the SDK (TS) evaluator and the mpc-2p backend (Go) port. Evaluator-level reasons only — adapter-level reasons (from_mismatch, intent_digest_mismatch, unauthenticated) are out of scope."
+	},
+	"vectors": [
+		{
+			"name": "allow-within-per-sign",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{
+						"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+						"maxPerSign": "1000",
+						"cumulativeCap": "5000"
+					}
+				],
+				"recipientAllowlist": null,
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "1700000000",
+			"expected": { "ok": true }
+		},
+		{
+			"name": "allow-value-equals-per-sign",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
+				],
+				"recipientAllowlist": null,
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "1700000000",
+			"expected": { "ok": true }
+		},
+		{
+			"name": "allow-cumulative-equals-cap",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{
+						"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+						"maxPerSign": "1000",
+						"cumulativeCap": "5000"
+					}
+				],
+				"recipientAllowlist": null,
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": {
+				"spentPerToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "spent": "4000" }
+				]
+			},
+			"now": "1700000000",
+			"expected": { "ok": true }
+		},
+		{
+			"name": "allow-recipient-on-allowlist",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
+				],
+				"recipientAllowlist": ["0x209693Bc6afc0C5328bA36FaF03C514EF312287C"],
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "1700000000",
+			"expected": { "ok": true }
+		},
+		{
+			"name": "deny-revoked",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
+				],
+				"recipientAllowlist": null,
+				"revoked": true
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "1700000000",
+			"expected": { "ok": false, "reason": "revoked" }
+		},
+		{
+			"name": "deny-expired-now-past-notAfter",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
+				],
+				"recipientAllowlist": null,
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "2000000001",
+			"expected": { "ok": false, "reason": "expired" }
+		},
+		{
+			"name": "deny-expired-validBefore-outlives-session",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "1000" },
+				"perToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
+				],
+				"recipientAllowlist": null,
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "2000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "500",
+			"expected": { "ok": false, "reason": "expired" }
+		},
+		{
+			"name": "deny-token-not-allowed",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
+				],
+				"recipientAllowlist": null,
+				"revoked": false
+			},
+			"intent": {
+				"token": "0x0000000000000000000000000000000000000ABc",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "1700000000",
+			"expected": { "ok": false, "reason": "token_not_allowed" }
+		},
+		{
+			"name": "deny-recipient-not-on-allowlist",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
+				],
+				"recipientAllowlist": ["0x209693Bc6afc0C5328bA36FaF03C514EF312287C"],
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x0000000000000000000000000000000000000002",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "1700000000",
+			"expected": { "ok": false, "reason": "recipient_not_allowed" }
+		},
+		{
+			"name": "deny-recipient-empty-allowlist-is-deny-all",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
+				],
+				"recipientAllowlist": [],
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "1700000000",
+			"expected": { "ok": false, "reason": "recipient_not_allowed" }
+		},
+		{
+			"name": "deny-amount-exceeds-per-sign",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "maxPerSign": "1000" }
+				],
+				"recipientAllowlist": null,
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1001",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": { "spentPerToken": [] },
+			"now": "1700000000",
+			"expected": { "ok": false, "reason": "amount_exceeds_per_sign" }
+		},
+		{
+			"name": "deny-amount-exceeds-cumulative",
+			"policy": {
+				"version": "1",
+				"session": { "id": "s", "notAfter": "2000000000" },
+				"perToken": [
+					{
+						"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+						"maxPerSign": "1000",
+						"cumulativeCap": "5000"
+					}
+				],
+				"recipientAllowlist": null,
+				"revoked": false
+			},
+			"intent": {
+				"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+				"chainId": 80002,
+				"from": "0x0000000000000000000000000000000000000001",
+				"to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+				"value": "1000",
+				"validAfter": "0",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			"state": {
+				"spentPerToken": [
+					{ "token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29", "spent": "4001" }
+				]
+			},
+			"now": "1700000000",
+			"expected": { "ok": false, "reason": "amount_exceeds_cumulative" }
+		}
+	]
+}

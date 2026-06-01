@@ -8,6 +8,8 @@
  * @packageDocumentation
  */
 
+import type { PolicyRejection } from "../signer/types";
+
 /**
  * Thrown when an x402 wire-format payload is malformed: invalid base64, invalid
  * JSON, or a value that cannot represent the expected schema.
@@ -79,5 +81,40 @@ export class X402InvalidConfigError extends Error {
 		this.name = "X402InvalidConfigError";
 		this.field = field;
 		this.reason = reason;
+	}
+}
+
+/**
+ * Thrown by {@link createX402PaymentSigner} (the `signer` variant) when the bound
+ * `PolicyGatedSigner` refuses to sign — i.e. its `sign()` returned
+ * `{ ok: false }`. Carries the typed {@link PolicyRejection} so callers can
+ * branch on `reason`. This is the policy-driven analog of the `account`
+ * variant's `maxAmountPerSign` throw ({@link X402InvalidPayloadError}): the
+ * `X402PaymentSigner.sign()` surface returns a payload or throws, unchanged.
+ *
+ * @example
+ * ```ts
+ * import { X402PolicyRejectedError } from "kawasekit";
+ *
+ * try {
+ *   await signer.sign({ paymentRequirements });
+ * } catch (error) {
+ *   if (error instanceof X402PolicyRejectedError) {
+ *     console.warn(`policy refused: ${error.reason}`);
+ *   }
+ * }
+ * ```
+ */
+export class X402PolicyRejectedError extends Error {
+	/** The policy rejection reason (e.g. `"amount_exceeds_per_sign"`). */
+	readonly reason: PolicyRejection["reason"];
+	/** The full typed rejection (its `detail` never contains the nonce or signature). */
+	readonly rejection: PolicyRejection;
+
+	constructor(rejection: PolicyRejection, options?: { cause?: unknown }) {
+		super(`x402 payment rejected by policy: ${rejection.reason} (${rejection.detail})`, options);
+		this.name = "X402PolicyRejectedError";
+		this.reason = rejection.reason;
+		this.rejection = rejection;
 	}
 }
