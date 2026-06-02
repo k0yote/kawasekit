@@ -5,8 +5,9 @@
  * deny-closed evaluator {@link evaluateSpendingPolicy}.
  *
  * The same specification is enforced SDK-side (the `local` adapter) and, for the
- * `mpc-2p` adapter, re-implemented backend-side in Go; a shared conformance
- * corpus (`__fixtures__/spending-policy.vectors.json`) keeps the two in lockstep.
+ * `mpc-2p` adapter, re-implemented backend-side in Rust (the `kawasekit-mpc-2p`
+ * co-signer); a shared conformance corpus
+ * (`__fixtures__/spending-policy.vectors.json`) keeps the two in lockstep.
  * The evaluator is **check-only** — it reads `SpendState` and never mutates it;
  * the cumulative-cap *commit* (folding a successful spend back in via
  * {@link mergeSpendState}) is the adapter's job, and atomic+authoritative
