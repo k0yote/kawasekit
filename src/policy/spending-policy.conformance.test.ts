@@ -12,9 +12,10 @@ import {
 
 /**
  * The B8 cross-language conformance corpus (SDK half). The same
- * `spending-policy.vectors.json` is consumed by the `mpc-2p` Go backend port
- * (M6-2); both must produce identical decisions. Encoding is pinned: decimal-
- * string bigints, EIP-55 addresses, `recipientAllowlist` null = any / [] = deny-all.
+ * `spending-policy.vectors.json` is consumed by the `mpc-2p` Rust backend port
+ * (M6-2; RFC M6-1 L1 — Rust, co-located with the DKLs crate); both must produce
+ * identical decisions. Encoding is pinned: decimal-string bigints, EIP-55
+ * addresses, `recipientAllowlist` "any" = any recipient / [] = deny-all.
  */
 interface VectorJson {
 	readonly name: string;
