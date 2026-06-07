@@ -18,6 +18,7 @@
 import type { Address } from "viem";
 import { getAddress, isAddress } from "viem";
 import { X402InvalidConfigError } from "../x402/errors";
+import type { Eip3009Domain } from "./eip3009";
 import {
 	getKnownAssetDomain,
 	type KnownAssetDomain,
@@ -132,4 +133,23 @@ export function resolveAssetParam(asset: X402AssetParam): ResolvedAsset {
 		"asset.kind",
 		`unsupported kind ${JSON.stringify(exhaustive.kind)}. Expected "known" or "unsafeOverride".`,
 	);
+}
+
+/**
+ * Assemble the EIP-712 {@link Eip3009Domain} from a construction-time pinned
+ * {@link ResolvedAsset} and the runtime `chainId`.
+ *
+ * The single place that maps `(pinned asset, chainId) -> domain`, so every
+ * signing path (`src/x402/client.ts`, `src/signer/`) builds the domain
+ * identically — the domain half of the EIP-712 single-source-of-truth the
+ * `mpc-2p` backend relies on (RFC M6-1 §4.5, H1). `name` / `version` /
+ * `verifyingContract` come from the pinned asset; only `chainId` is per-request.
+ */
+export function resolvedAssetToEip3009Domain(asset: ResolvedAsset, chainId: number): Eip3009Domain {
+	return {
+		name: asset.name,
+		version: asset.version,
+		chainId,
+		verifyingContract: asset.verifyingContract,
+	};
 }

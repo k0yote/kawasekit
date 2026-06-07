@@ -68,17 +68,24 @@ export type {
 	SignResult,
 } from "./signer/types";
 export {
+	type ResolvedAsset,
+	resolvedAssetToEip3009Domain,
+} from "./tokens/asset-domain";
+export {
 	authorizationDeadlineFromNow,
 	type CancelAuthorizationMessage,
+	cancelAuthorizationTypes,
 	deriveAuthorizationNonce,
 	type Eip3009Domain,
 	generateAuthorizationNonce,
 	type ReceiveWithAuthorizationMessage,
+	receiveWithAuthorizationTypes,
 	type SignedAuthorization,
 	signCancelAuthorization,
 	signReceiveWithAuthorization,
 	signTransferWithAuthorization,
 	type TransferWithAuthorizationMessage,
+	transferWithAuthorizationTypes,
 } from "./tokens/eip3009";
 export {
 	getJpycAddress,

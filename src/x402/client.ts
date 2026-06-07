@@ -22,7 +22,7 @@ import { getChain, isSupportedChainId } from "../chains";
 import { assertNonBypassable } from "../signer/gate";
 import type { NonBypassableEnforcement, PaymentIntent, PolicyGatedSigner } from "../signer/types";
 import type { X402AssetParam, X402TokenDomain } from "../tokens/asset-domain";
-import { resolveAssetParam } from "../tokens/asset-domain";
+import { resolveAssetParam, resolvedAssetToEip3009Domain } from "../tokens/asset-domain";
 import {
 	authorizationDeadlineFromNow,
 	deriveAuthorizationNonce,
@@ -366,12 +366,7 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 					: generateAuthorizationNonce();
 			const signed = await signTransferWithAuthorization(
 				account,
-				{
-					name: pinnedDomain.name,
-					version: pinnedDomain.version,
-					chainId,
-					verifyingContract: pinnedDomain.verifyingContract,
-				},
+				resolvedAssetToEip3009Domain(pinnedDomain, chainId),
 				{
 					from: account.address,
 					to: payTo,

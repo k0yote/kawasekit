@@ -1,0 +1,122 @@
+{
+	"version": "1",
+	"encoding": {
+		"note": "EIP-712 digest-conformance corpus (B8). Pinned encoding: uint256 as decimal string, addresses EIP-55 checksummed, bytes32 nonce and 32-byte digest as 0x-hex. `digest` = keccak256(0x1901 || domainSeparator || hashStruct(message)) over the SDK's EXPORTED transfer/receiveWithAuthorizationTypes. The Rust mpc-2p backend (M6-1 RFC §4.5, H1) MUST reproduce each digest byte-for-byte from the same (domain, types, message) — this enforces that the bytes the policy gates on are the bytes ecrecover verifies, cross-language."
+	},
+	"vectors": [
+		{
+			"name": "transfer-polygon-137",
+			"primaryType": "TransferWithAuthorization",
+			"domain": {
+				"name": "JPY Coin",
+				"version": "1",
+				"chainId": 137,
+				"verifyingContract": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "1000000000000000000",
+				"validAfter": "0",
+				"validBefore": "1893456000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000001"
+			},
+			"digest": "0x81c5254766b0b71aebf36e37d4cfa1679777671fb60240b91932b010b05c921b"
+		},
+		{
+			"name": "transfer-amoy-80002",
+			"primaryType": "TransferWithAuthorization",
+			"domain": {
+				"name": "JPY Coin",
+				"version": "1",
+				"chainId": 80002,
+				"verifyingContract": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "10000000000000000",
+				"validAfter": "0",
+				"validBefore": "1893456000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000002"
+			},
+			"digest": "0x05c8203b202cc9bc101d9c67ca427d7e5f8dad0183bdfabe2587cb5259e54463"
+		},
+		{
+			"name": "transfer-ethereum-1-large",
+			"primaryType": "TransferWithAuthorization",
+			"domain": {
+				"name": "JPY Coin",
+				"version": "1",
+				"chainId": 1,
+				"verifyingContract": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "123456789000000000000000",
+				"validAfter": "1700000000",
+				"validBefore": "1893456000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000003"
+			},
+			"digest": "0x1c256f73fb52a250f571d6a4b8e406c5e331ccc4d7d70dae773c98b97351efb7"
+		},
+		{
+			"name": "transfer-kaia-8217-validafter",
+			"primaryType": "TransferWithAuthorization",
+			"domain": {
+				"name": "JPY Coin",
+				"version": "1",
+				"chainId": 8217,
+				"verifyingContract": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "500000000000000000000",
+				"validAfter": "1800000000",
+				"validBefore": "1900000000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000004"
+			},
+			"digest": "0x7df1b835768eec1e2b7f8602183865e051ad8da9044a6f346639ef26215b0eea"
+		},
+		{
+			"name": "receive-polygon-137",
+			"primaryType": "ReceiveWithAuthorization",
+			"domain": {
+				"name": "JPY Coin",
+				"version": "1",
+				"chainId": 137,
+				"verifyingContract": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "2500000000000000000",
+				"validAfter": "0",
+				"validBefore": "1893456000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000005"
+			},
+			"digest": "0x564911c4486e9cbf9ffaaf26c8be8040cc6a5aa5ab8a945017daf70555469cca"
+		},
+		{
+			"name": "transfer-amoy-80002-maxuint",
+			"primaryType": "TransferWithAuthorization",
+			"domain": {
+				"name": "JPY Coin",
+				"version": "1",
+				"chainId": 80002,
+				"verifyingContract": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+				"validAfter": "0",
+				"validBefore": "1893456000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000006"
+			},
+			"digest": "0xd4ad9dd98e01151dd11ca1d0bba6a0431e6ac5a9e701247445e2642ed6bf42c7"
+		}
+	]
+}

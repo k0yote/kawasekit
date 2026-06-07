@@ -73,7 +73,18 @@ export interface SignedAuthorization<TMessage> {
 // EIP-712 type definitions (must match EIP-3009 byte-for-byte)
 // ---------------------------------------------------------------------------
 
-const transferWithAuthorizationTypes = {
+/**
+ * Canonical EIP-712 `TransferWithAuthorization` type definition.
+ *
+ * This is the **single source of truth** for the typed-data structure (field
+ * names, types, and order) that EIP-3009 hashes and `ecrecover` verifies.
+ * Exported so out-of-process / cross-language consumers — notably the `mpc-2p`
+ * co-signer backend (RFC M6-1 §4.5, H1) — bind to this exact definition (or
+ * codegen from it) instead of re-declaring it, and so the digest the policy
+ * gates on is provably the digest the chain verifies (see the digest-conformance
+ * corpus in `__fixtures__/eip3009-digest.vectors.json`).
+ */
+export const transferWithAuthorizationTypes = {
 	TransferWithAuthorization: [
 		{ name: "from", type: "address" },
 		{ name: "to", type: "address" },
@@ -84,7 +95,8 @@ const transferWithAuthorizationTypes = {
 	],
 } as const;
 
-const receiveWithAuthorizationTypes = {
+/** Canonical EIP-712 `ReceiveWithAuthorization` types. See {@link transferWithAuthorizationTypes}. */
+export const receiveWithAuthorizationTypes = {
 	ReceiveWithAuthorization: [
 		{ name: "from", type: "address" },
 		{ name: "to", type: "address" },
@@ -95,7 +107,8 @@ const receiveWithAuthorizationTypes = {
 	],
 } as const;
 
-const cancelAuthorizationTypes = {
+/** Canonical EIP-712 `CancelAuthorization` types. See {@link transferWithAuthorizationTypes}. */
+export const cancelAuthorizationTypes = {
 	CancelAuthorization: [
 		{ name: "authorizer", type: "address" },
 		{ name: "nonce", type: "bytes32" },

@@ -18,7 +18,7 @@ import { getAddress } from "viem";
 import type { SpendingPolicy, SpendState } from "../policy/spending-policy";
 import { evaluateSpendingPolicy } from "../policy/spending-policy";
 import type { X402AssetParam } from "../tokens/asset-domain";
-import { resolveAssetParam } from "../tokens/asset-domain";
+import { resolveAssetParam, resolvedAssetToEip3009Domain } from "../tokens/asset-domain";
 import { signTransferWithAuthorization } from "../tokens/eip3009";
 import { PolicyGatedSignerConfigError } from "./errors";
 import type { PaymentIntent, PolicyGatedSigner, SignerDescription, SignResult } from "./types";
@@ -108,12 +108,7 @@ export function createLocalPolicyGatedSigner(
 
 			const signed = await signTransferWithAuthorization(
 				account,
-				{
-					name: pinned.name,
-					version: pinned.version,
-					chainId: intent.chainId,
-					verifyingContract: pinned.verifyingContract,
-				},
+				resolvedAssetToEip3009Domain(pinned, intent.chainId),
 				{
 					from,
 					to: intent.to,
