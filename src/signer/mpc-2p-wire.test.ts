@@ -1,14 +1,19 @@
 import { createHmac } from "node:crypto";
 import type { Hex } from "viem";
 import { describe, expect, it } from "vitest";
-import { canonicalIntentBytes, toWireIntent, WIRE_VERSION } from "./mpc-2p-wire";
+import {
+	type CoSignRequestEnvelope,
+	canonicalRequestBytes,
+	toWireIntent,
+	WIRE_VERSION,
+} from "./mpc-2p-wire";
 import type { PaymentIntent } from "./types";
 
 /**
- * The frozen A3 conformance vector — identical to the backend's
- * `kawasekit-mpc-2p` `src/auth.rs` test (`frozen_intent` / `FROZEN_CANONICAL` /
- * `FROZEN_TAG_HEX`). If this drifts, the SDK's A3 tag would no longer equal what
- * the co-signer verifies. Pinned on BOTH sides.
+ * The frozen A3 v2 conformance vector — identical to the backend's
+ * `kawasekit-mpc-2p` `src/auth.rs` test (`FROZEN_CANONICAL` / `FROZEN_TAG_HEX`).
+ * If this drifts, the SDK's A3 tag would no longer equal what the co-signer
+ * verifies. Pinned on BOTH sides.
  */
 const FROZEN_INTENT: PaymentIntent = {
 	token: "0x1111111111111111111111111111111111111111",
@@ -21,8 +26,19 @@ const FROZEN_INTENT: PaymentIntent = {
 	nonce: `0x${"44".repeat(32)}` as Hex,
 };
 
+const FROZEN_ENV: CoSignRequestEnvelope = {
+	ceremonyId: "ceremony-0000",
+	ssid: "ssid-0000",
+	intent: FROZEN_INTENT,
+	freshnessTs: 1_700_000_000,
+	freshnessNonce: `0x${"55".repeat(16)}` as Hex,
+};
+
 const FROZEN_CANONICAL =
-	"kawasekit-mpc-2p/cosign-request/v2\n" +
+	"kawasekit-mpc-2p/cosign-request/v3\n" +
+	"wireVersion=2\n" +
+	"ceremonyId=ceremony-0000\n" +
+	"ssid=ssid-0000\n" +
 	"token=0x1111111111111111111111111111111111111111\n" +
 	"chainId=80002\n" +
 	"from=0x2222222222222222222222222222222222222222\n" +
@@ -30,35 +46,43 @@ const FROZEN_CANONICAL =
 	"value=123456\n" +
 	"validAfter=0\n" +
 	"validBefore=4000000000\n" +
-	`nonce=0x${"44".repeat(32)}\n`;
+	`nonce=0x${"44".repeat(32)}\n` +
+	"freshnessTs=1700000000\n" +
+	`freshnessNonce=0x${"55".repeat(16)}\n`;
 
-const FROZEN_TAG_HEX = "0568e4126191dab0879c18e9adf9332d10b725dd5a7455a4008200be337ca59b";
+const FROZEN_TAG_HEX = "15a8943e044d2561a6c1e9b00b01b08404757c15694cdd2a5e00c5a8891dbdf4";
 
-describe("canonicalIntentBytes — A3 conformance vector (TS == Rust)", () => {
-	it("reproduces the frozen canonical bytes exactly (314 bytes)", () => {
-		const bytes = canonicalIntentBytes(FROZEN_INTENT);
+describe("canonicalRequestBytes — A3 v2 conformance vector (TS == Rust)", () => {
+	it("reproduces the frozen canonical bytes exactly (441 bytes)", () => {
+		const bytes = canonicalRequestBytes(FROZEN_ENV);
 		expect(new TextDecoder().decode(bytes)).toBe(FROZEN_CANONICAL);
-		expect(bytes.length).toBe(314);
+		expect(bytes.length).toBe(441);
 	});
 
 	it("HMAC-SHA256 over the canonical bytes equals the backend's frozen tag", () => {
 		// node:crypto in the TEST only — the SDK never does HMAC (the key lives in
 		// the injected authenticator). This pins the canonical encoding to the
-		// backend's `auth::canonical_intent_bytes` + key [0x42; 32].
+		// backend's `auth::canonical_request_bytes` + key [0x42; 32].
 		const key = Buffer.alloc(32, 0x42);
 		const tag = createHmac("sha256", key)
-			.update(Buffer.from(canonicalIntentBytes(FROZEN_INTENT)))
+			.update(Buffer.from(canonicalRequestBytes(FROZEN_ENV)))
 			.digest("hex");
 		expect(tag).toBe(FROZEN_TAG_HEX);
 	});
 
-	it("is case-insensitive on addresses / nonce (lowercases them)", () => {
-		const upper: PaymentIntent = {
-			...FROZEN_INTENT,
-			token: "0x1111111111111111111111111111111111111111".toUpperCase().replace("0X", "0x") as Hex,
-			nonce: `0x${"44".repeat(32)}`.toUpperCase().replace("0X", "0x") as Hex,
+	it("is case-insensitive on addresses / nonces (lowercases them)", () => {
+		const upper: CoSignRequestEnvelope = {
+			...FROZEN_ENV,
+			intent: {
+				...FROZEN_INTENT,
+				token: "0x1111111111111111111111111111111111111111"
+					.toUpperCase()
+					.replace("0X", "0x") as Hex,
+				nonce: `0x${"44".repeat(32)}`.toUpperCase().replace("0X", "0x") as Hex,
+			},
+			freshnessNonce: `0x${"55".repeat(16)}`.toUpperCase().replace("0X", "0x") as Hex,
 		};
-		expect(new TextDecoder().decode(canonicalIntentBytes(upper))).toBe(FROZEN_CANONICAL);
+		expect(new TextDecoder().decode(canonicalRequestBytes(upper))).toBe(FROZEN_CANONICAL);
 	});
 });
 
@@ -83,7 +107,7 @@ describe("toWireIntent — matches the Rust WireIntent encoding", () => {
 });
 
 describe("WIRE_VERSION", () => {
-	it("is pinned to 1 (matches the backend)", () => {
-		expect(WIRE_VERSION).toBe(1);
+	it("is pinned to 2 (matches the backend)", () => {
+		expect(WIRE_VERSION).toBe(2);
 	});
 });

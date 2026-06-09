@@ -31,13 +31,13 @@
  */
 
 import type { Address, Hex } from "viem";
-import { getAddress, hashTypedData, serializeSignature } from "viem";
+import { getAddress, hashTypedData, serializeSignature, toHex } from "viem";
 import type { X402AssetParam } from "../tokens/asset-domain";
 import { resolveAssetParam, resolvedAssetToEip3009Domain } from "../tokens/asset-domain";
 import { transferWithAuthorizationTypes } from "../tokens/eip3009";
 import { CoSignUnavailableError, PolicyGatedSignerConfigError } from "./errors";
-import type { CoSignFrame } from "./mpc-2p-wire";
-import { canonicalIntentBytes, toWireIntent, WIRE_VERSION } from "./mpc-2p-wire";
+import type { CoSignFrame, CoSignRequestEnvelope } from "./mpc-2p-wire";
+import { canonicalRequestBytes, toWireIntent, WIRE_VERSION } from "./mpc-2p-wire";
 import type {
 	PaymentIntent,
 	PolicyGatedSigner,
@@ -78,7 +78,7 @@ export interface CoSignTransport {
 
 /** The A3 request authenticator — HMAC (or signature) over the canonical request bytes. */
 export interface CoSignRequestAuthenticator {
-	/** Authenticator tag over {@link canonicalIntentBytes}; the key stays inside. */
+	/** Authenticator tag over {@link canonicalRequestBytes}; the key stays inside. */
 	tag(canonicalRequest: Uint8Array): Hex | Promise<Hex>;
 }
 
@@ -191,13 +191,22 @@ export function createMpc2pPolicyGatedSigner(
 				},
 			});
 
-			// A3: authenticate the request (the canonical bytes are the shared SoT; the
-			// HMAC key lives inside the injected authenticator).
-			const authTag = await authenticator.tag(canonicalIntentBytes(intent));
+			// A3 (v2): build the request envelope — a fresh per-ceremony id + ssid + freshness
+			// (a timestamp + a per-request nonce, distinct from the EIP-3009 nonce) — and
+			// authenticate over its canonical bytes (the shared SoT; the HMAC key lives inside
+			// the injected authenticator). Web Crypto is isomorphic (Node 19+ / browsers).
+			const env: CoSignRequestEnvelope = {
+				ceremonyId: globalThis.crypto.randomUUID(),
+				ssid: globalThis.crypto.randomUUID(),
+				intent,
+				freshnessTs: Math.floor(Date.now() / 1000),
+				freshnessNonce: toHex(globalThis.crypto.getRandomValues(new Uint8Array(16))),
+			};
+			const authTag = await authenticator.tag(canonicalRequestBytes(env));
 
 			const conn = await openConnection(transport);
 			try {
-				return await runCeremony(conn, agent, session.id, intent, digest, authTag);
+				return await runCeremony(conn, agent, session.id, env, digest, authTag);
 			} finally {
 				try {
 					await conn.close();
@@ -238,7 +247,7 @@ async function runCeremony(
 	conn: CoSignConnection,
 	agent: Mpc2pCoSignAgent,
 	sessionId: string,
-	intent: PaymentIntent,
+	env: CoSignRequestEnvelope,
 	digest: Hex,
 	authTag: Hex,
 ): Promise<SignResult> {
@@ -268,7 +277,11 @@ async function runCeremony(
 		wire_version: WIRE_VERSION,
 		kind: "request",
 		session_id: sessionId,
-		intent: toWireIntent(intent),
+		ceremony_id: env.ceremonyId,
+		ssid: env.ssid,
+		intent: toWireIntent(env.intent),
+		freshness_ts: env.freshnessTs,
+		freshness_nonce: env.freshnessNonce,
 		auth_tag: authTag,
 	});
 
@@ -311,7 +324,7 @@ async function runCeremony(
 				) {
 					throw new CoSignUnavailableError("the backend and agent derived different signatures");
 				}
-				return { ok: true, signature: assembleSignature(agentSig), intent };
+				return { ok: true, signature: assembleSignature(agentSig), intent: env.intent };
 			}
 			case "rejection": {
 				// A genuine policy denial → typed rejection. A non-policy "rejection"

@@ -17,7 +17,7 @@ import {
 	type Mpc2pCoSignAgent,
 	type Mpc2pStepOutcome,
 } from "./mpc-2p";
-import type { CoSignFrame } from "./mpc-2p-wire";
+import { type CoSignFrame, type CoSignRequestEnvelope, canonicalRequestBytes } from "./mpc-2p-wire";
 import type { NonBypassableEnforcement, PaymentIntent, PolicyGatedSigner } from "./types";
 
 const FROM = getAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
@@ -128,16 +128,16 @@ function mockAuth(tag: Hex = "0xfeed"): CoSignRequestAuthenticator & { inputs: U
 	};
 }
 
-const round = (payload: Hex): CoSignFrame => ({ wire_version: 1, kind: "round", payload });
+const round = (payload: Hex): CoSignFrame => ({ wire_version: 2, kind: "round", payload });
 const result = (r: Hex, s: Hex, v: number): CoSignFrame => ({
-	wire_version: 1,
+	wire_version: 2,
 	kind: "result",
 	r,
 	s,
 	v,
 });
 const reject = (reason: string, detail = "d"): CoSignFrame => ({
-	wire_version: 1,
+	wire_version: 2,
 	kind: "rejection",
 	reason,
 	detail,
@@ -234,11 +234,12 @@ describe("createMpc2pPolicyGatedSigner — sign (success)", () => {
 		expect(agent.startedWith).toEqual([expectedDigest(intent())]);
 	});
 
-	it("A3: the request frame carries the authenticator's tag over canonicalIntentBytes", async () => {
+	it("A3 v2: request carries fresh ceremony/ssid/freshness + a tag over canonicalRequestBytes", async () => {
 		const agent = mockAgent();
 		const conn = mockConn([round("0xb1"), result(SIG.r, SIG.s, SIG.v)]);
 		const auth = mockAuth("0xc0ffee");
-		await makeSigner({ agent, transport: mockTransport(conn), authenticator: auth }).sign(intent());
+		const i = intent();
+		await makeSigner({ agent, transport: mockTransport(conn), authenticator: auth }).sign(i);
 
 		const request = conn.sent.find((f) => f.kind === "request");
 		expect(request).toBeDefined();
@@ -246,9 +247,24 @@ describe("createMpc2pPolicyGatedSigner — sign (success)", () => {
 		expect(request.auth_tag).toBe("0xc0ffee");
 		expect(request.session_id).toBe("sess-1");
 		expect(request.intent.value).toBe("1000");
+		// v2: a per-ceremony id + ssid + freshness are generated and present.
+		expect(request.ceremony_id).toMatch(/^[0-9a-f-]{36}$/);
+		expect(request.ssid).toMatch(/^[0-9a-f-]{36}$/);
+		expect(typeof request.freshness_ts).toBe("number");
+		expect(request.freshness_nonce).toMatch(/^0x[0-9a-f]{32}$/);
+		// The authenticator HMAC'd exactly canonicalRequestBytes(env) — reconstruct it from the
+		// sent frame + the original intent and assert byte-equality (no injection needed).
 		expect(auth.inputs).toHaveLength(1);
+		const env: CoSignRequestEnvelope = {
+			ceremonyId: request.ceremony_id,
+			ssid: request.ssid,
+			intent: i,
+			freshnessTs: request.freshness_ts,
+			freshnessNonce: request.freshness_nonce,
+		};
+		expect(auth.inputs[0]).toEqual(canonicalRequestBytes(env));
 		// The agent's first round is sent right after the request.
-		expect(conn.sent[1]).toEqual({ wire_version: 1, kind: "round", payload: "0xa1" });
+		expect(conn.sent[1]).toEqual({ wire_version: 2, kind: "round", payload: "0xa1" });
 	});
 });
 
@@ -338,7 +354,7 @@ describe("createMpc2pPolicyGatedSigner — no-silent-fallback", () => {
 	});
 
 	it("throws on an explicit error frame", async () => {
-		const conn = mockConn([{ wire_version: 1, kind: "error", message: "internal" }]);
+		const conn = mockConn([{ wire_version: 2, kind: "error", message: "internal" }]);
 		await expect(
 			makeSigner({ transport: mockTransport(conn) }).sign(intent()),
 		).rejects.toBeInstanceOf(CoSignUnavailableError);
@@ -346,7 +362,7 @@ describe("createMpc2pPolicyGatedSigner — no-silent-fallback", () => {
 
 	it("throws on a wire_version mismatch", async () => {
 		const conn = mockConn([
-			{ wire_version: 2, kind: "result", r: SIG.r, s: SIG.s, v: SIG.v } as unknown as CoSignFrame,
+			{ wire_version: 99, kind: "result", r: SIG.r, s: SIG.s, v: SIG.v } as unknown as CoSignFrame,
 		]);
 		await expect(
 			makeSigner({ transport: mockTransport(conn) }).sign(intent()),
