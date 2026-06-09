@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | M6-3a |
 | **Title** | The cross-process / cross-runtime co-sign wire — agent-WASM-in-Node ↔ owner-Rust backend over an authenticated, (m)TLS network channel |
-| **Status** | Draft v3 — **design-first**; **Slice 1 (cross-runtime wire) + C1 (durable store) implemented** in `kawasekit-mpc-2p`. An external CTO review (2026-06-08, source-verified) found one Critical **C1**: the in-memory ledger + idempotency stores made the "at most one cap-commit per (session, nonce)" invariant **false across a restart / sibling instance** (my web3-cto-review **H3** §4.6 claim under-counted the risk — the nonce store was as ephemeral as the freshness set it contrasted). **C1 remediated** (durable, transactional, single-instance **SQLite** store; restart-replay + cap-persistence + TTL conformance tests; §4.6 / constraint 7 / §4.8 / §6 corrected; roadmap §6 adds it as a third engagement-readiness precondition). The review's other findings (M1 in-policy-drain row, M2 response-direction auth, M3 host-clock-skew, L1 concurrency property+test [verified safe], L2 transport-deps supply-chain, L3 async-cancellation, L4 transfer-vs-receive) are RFC-text and tracked for the next pass; L1′ retracted. **(prior:)** `web3-cto-review` **pass 1 done; all findings closed** — Sprint 1 (H1 cross-target serialization claim → "verified by test, not by construction"; H2 nonce-reuse-on-retry adapter invariant + call-vs-intent idempotency scope; H3 A3-freshness reframed, fund-safety on nonce-idempotency+SpendState) + Sprint 2 (M1 ceremony-liveness minimum-window invariant + W11; M2 additive `nonce_reuse_conflict` reason / `intent_digest_mismatch` unreachable-by-A4; M3 agent-side `MAX_FRAME_BYTES` bound; M4 mTLS default-for-remote; M5 conditional H1-closure wording) + Sprint 3 (L1 threat-5.2 anchor; L2 exit-path + monitoring cross-ref). The crypto, the backend gate, and the in-Rust transport are **already proven** (M6-1 spike + `kawasekit-mpc-2p` slices 1–11, self-audited); **the un-built piece is the wire across the Node(WASM)↔Rust process/runtime/network boundary** + the SDK adapter that drives it. This RFC specifies that wire and makes it the threat-model protagonist. |
+| **Status** | Draft v3 — **design-first**; **Slice 1 (cross-runtime wire) + C1 (durable store) implemented** in `kawasekit-mpc-2p`. An external CTO review (2026-06-08, source-verified) found one Critical **C1**: the in-memory ledger + idempotency stores made the "at most one cap-commit per (session, nonce)" invariant **false across a restart / sibling instance** (my web3-cto-review **H3** §4.6 claim under-counted the risk — the nonce store was as ephemeral as the freshness set it contrasted). **C1 remediated** (durable, transactional, single-instance **SQLite** store; restart-replay + cap-persistence + TTL conformance tests; §4.6 / constraint 7 / §4.8 / §6 corrected; roadmap §6 adds it as a third engagement-readiness precondition). The review's other findings are **now applied (RFC text)**: M1 §5/W12 in-policy-drain row + constraint-2 cap backstop; M2 §4.6 response-direction-not-E2E-authenticated bullet; M3 §4.8 host-clock-skew budget + W11; L1 §4.9 per-call-isolation property [verified safe] + §6/test 10 (+ a native concurrency test in mpc-2p); L2 §4.8 transport-deps supply-chain; L3 §4.7 async-cancellation + §6/test 5; L4 §4.9 transfer-vs-receive + griefing. L1′ retracted. **All external-review findings (C1 + M1/M2/M3 + L1/L2/L3/L4) closed.** **(prior:)** `web3-cto-review` **pass 1 done; all findings closed** — Sprint 1 (H1 cross-target serialization claim → "verified by test, not by construction"; H2 nonce-reuse-on-retry adapter invariant + call-vs-intent idempotency scope; H3 A3-freshness reframed, fund-safety on nonce-idempotency+SpendState) + Sprint 2 (M1 ceremony-liveness minimum-window invariant + W11; M2 additive `nonce_reuse_conflict` reason / `intent_digest_mismatch` unreachable-by-A4; M3 agent-side `MAX_FRAME_BYTES` bound; M4 mTLS default-for-remote; M5 conditional H1-closure wording) + Sprint 3 (L1 threat-5.2 anchor; L2 exit-path + monitoring cross-ref). The crypto, the backend gate, and the in-Rust transport are **already proven** (M6-1 spike + `kawasekit-mpc-2p` slices 1–11, self-audited); **the un-built piece is the wire across the Node(WASM)↔Rust process/runtime/network boundary** + the SDK adapter that drives it. This RFC specifies that wire and makes it the threat-model protagonist. |
 | **Author** | k0yote |
 | **Reviewers (invited)** | `web3-cto-review` skill (mandatory pass — the wire's new attacker model is this RFC's burden) |
 | **Milestone** | M6-3a (the next real technical milestone; roadmap §5) — turns the proven backend + the proven seam into a working end-to-end co-sign over a real wire, the first artifact a paying engagement integrates. |
@@ -140,7 +140,11 @@ Inherited from the M6-0 contract, the M6-1 RFC, the proven backend, and `CLAUDE.
    transport to that gate; it does **not** move any authorization decision onto the agent.
 2. **The agent is untrusted; the wire does not change that.** The backend trusts nothing the
    agent says or sends; it re-derives the digest and re-evaluates the policy itself (M6-0
-   S1; M6-1 constraint 7). The control envelope is *input to be validated*, never trusted.
+   S1; M6-1 constraint 7). The control envelope is *input to be validated*, never trusted. An
+   *authenticated* but compromised/prompt-injected agent is therefore bounded **not** by
+   authentication but by the **atomic cumulative `SpendState` cap** (the load-bearing backstop
+   for in-policy drain, §5/W12); prompt-injection defence is layered (policy caps + a tight
+   per-deployment cap + agent-framework guardrails).
 3. **No silent advisory fallback.** When the co-signer is unreachable, the adapter returns a
    typed **transient/internal error** — it MUST NEVER produce an `{ok:true}` signature by
    any local path. A policy *denial* (`{ok:false, rejection}`) is distinct from a transport
@@ -404,6 +408,15 @@ for the wire:
 - **auth ≠ authz.** A valid authenticator never substitutes for the policy evaluation — an
   authenticated caller still passes the full §4.3 gate. Failure ⇒ `unauthenticated`, no
   rounds. (M6-0 §4.9; M6-1 §4.8.)
+- **Response-direction integrity (M2).** A3 authenticates the **agent→backend** request
+  end-to-end; the **backend→agent** frames (`round`/`result`/`rejection`) have **no
+  application-layer authenticator** — their integrity rests on **TLS**. Under a TLS-terminating
+  proxy this leaves the proxy↔backend hop unauthenticated for responses, but it is **contained
+  to DoS, never forgery**: a tampered `round` trips the DKLs ssid/transcript integrity (abort), a
+  tampered `result` is caught by the agent's **`ecrecover == from` + low-S self-check** (§4.3
+  step 5), and a tampered `rejection` is a self-inflicted DoS. An integrator who cannot trust the
+  proxy↔backend segment should **terminate TLS at the backend** (§4.8). The asymmetry (request
+  A3-authenticated, response crypto-self-verified) is deliberate, not an oversight.
 
 ### 4.7 Retry × idempotency when the wire drops *mid-ceremony*
 
@@ -433,6 +446,14 @@ explicit non-goal for v1 (§10 Q2). The backend's `ban → permanent-revoke` (DK
 H2, already shipped) still applies: an *identifiable-abort/ban* condition is terminal (no
 retry), distinct from a transient transport loss (retry-safe) — the adapter must classify
 the two and only retry the transient class.
+
+**Async cancellation safety (L3).** Restart-not-resume covers the *protocol* state; the wss
+ceremony handler is new **async** code on the hostile-network boundary, so it must also be
+**cancellation-safe at the task level**: a connection dropped mid-round must cancel the
+ceremony task cleanly — no leaked task, no half-committed `SpendState` (the RAII reservation +
+the atomic confirm guarantee this), and no resource growth under repeated drops. A
+fault-injection assertion (§6/test 5) checks that repeated mid-ceremony drops do not grow the
+backend's task count or memory.
 
 **Adapter invariant — retry reuses the identical intent (H2).** The whole retry-safety
 argument rests on a behaviour the adapter MUST enforce: **on the transient-transport retry
@@ -477,6 +498,12 @@ The owner self-hosts the backend, so transport security is part of the deliverab
   **DKG ceremony on the client's infrastructure** (build-for-client delivery; roadmap §7).
   k0yote never holds a share *nor* the A3 key. The provisioning ceremony's own threat
   surface is flagged for M6-3b/M6-4 (§10 Q5) — M6-3a assumes keys are already in place.
+- **Transport dependencies + supply chain (L2).** The new SDK-side transport stack (the wss /
+  WebSocket client, the TLS stack, and the CBOR codec if chosen, §10 Q6) is **exact-pinned**,
+  covered by the repo's `minimumReleaseAge` hold + the postinstall-script allowlist (`CLAUDE.md`
+  Supply Chain Policy), and reviewed as **security-relevant** — the wss/TLS client in particular
+  (it is the hostile-network boundary). The backend already bounds inbound frames via
+  `MAX_FRAME_BYTES` (mpc-2p self-audit M2). Verify against `package.json` when the deps land.
 - **Why three layers, not one.** TLS server-auth (fake-server) ≠ A3 request-auth
   (forged-requester) ≠ DKLs ssid binding (replayed-protocol-message). A MITM who somehow
   breaks one layer still faces the others; and even a perfect MITM cannot produce a valid
@@ -503,6 +530,15 @@ drops) the wire can otherwise push completion past `validBefore`, producing a do
 that wastes the facilitator's gas on a failed settle and triggers a retry (cap pressure) —
 see W11. Measuring the real round-trip to size this window is §10 Q1.
 
+**Benign agent-host clock skew (M3).** The adapter sets `validAfter`/`validBefore` from the
+**agent host's clock**, but validity is judged against **chain time at settle** — and M6-3a
+makes the agent a *separate host*, so its clock is now a deployment variable (like W10's RNG).
+A skewed host issues born-expired / not-yet-valid authorizations **with no adversary at all**
+(same wasted-gas + retry/cap-pressure outcome as W11). Therefore the window sizing **MUST also
+budget the maximum tolerated host clock skew** when issuing `validAfter`/`validBefore` (or
+derive them from a trusted time source), and **agent-host clock / NTP integrity** joins the
+deployment checklist next to W10's CSPRNG requirement.
+
 ### 4.9 Revocation, multi-session, settle — unchanged, reused over the wire
 
 These are proven in the backend and need no new design — only to keep working across the
@@ -519,6 +555,22 @@ wire:
   wire settles a real EIP-3009 `transferWithAuthorization` exactly as M6-1 Stage 4 did — now
   with the **distributed-DKG key + the full cross-process topology** (the DoD bar, §8/§6
   test 9).
+- **`transfer*` vs `receive*` + front-run griefing (L4).** The wire produces a
+  `transferWithAuthorization` authorization (the backend re-derives that EIP-712 digest, §4.5),
+  submitted by a **non-recipient facilitator** — so `transferWithAuthorization` is structurally
+  required (`receiveWithAuthorization` needs `msg.sender == to`). `transfer*` carries the EIP-3009
+  **front-run nonce-griefing** surface (a third party burns the nonce, failing the legit settle);
+  the **fixed `to`** means a captured signature can only *grief*, not *redirect* funds. The
+  griefing treatment is carried from M6-1 / `docs/THREAT_MODEL.md` (threat 1.3), not new here.
+- **Per-call concurrency isolation (L1 — verified safe by construction).** Parallel `sign()`
+  calls on the agent's one WASM share are isolated **by construction**: the share is borrowed
+  **immutably**, each call builds a **fresh `SignSession`/`SignStepper`** with its **own
+  channel**, and the crypto-core has **no shared mutable signing state** (no `static mut` /
+  `Mutex` / `thread_local`; `agent-wasm` has no module-global state). So concurrent ceremonies
+  share only the immutable key — the catastrophic nonce/`k`-reuse class **does not exist**, and
+  no per-share mutex is needed (adding one would be over-building). The un-built TS adapter MUST
+  **preserve** this — drive each `sign()` through its own channel + ceremony, never a shared WASM
+  session — and a concurrency conformance test guards it (§6/test 10).
 
 ---
 
@@ -541,7 +593,8 @@ threat sharpens an M6-1 threat, the cross-reference is noted.
 | **W8** | **Silent advisory fallback** when the co-signer is unreachable → a `local` signature smuggled into a bounded flow | The adapter has **no local-signing path**; a transport/availability failure **throws `CoSignUnavailableError`**, never `{ok:true}`, never a `rejection` (§4.4). This no-fallback property + the type-gate is precisely what makes **H1 closed at runtime** (conditionally — §4.4/M5). |
 | **W9** | **DoS on the co-sign endpoint** — agent can't reach the gate, so it can't pay | Availability, not theft. It is the *same mechanism* as revoke (negative control), so it cannot be designed away — it is documented. Mitigations: HTTP-layer rate-limiting (operator, mirroring THREAT_MODEL 2.3), the agent's typed-transient-error handling + bounded retry. **Share-availability (a lost share) is a different problem — B5, out of scope (§9).** |
 | **W10** | **Agent-side RNG failure / bias** now on a real separate host | Unchanged from M6-1 **T12**: the agent host MUST provide a CSPRNG (Web Crypto in Node ✓); flag bundlers that don't. Now that the agent is a genuinely separate host, this is a deployment checklist item; nonce-generation integrity stays in the **audit (T2)** scope. |
-| **W11** | **Selective delay (not drop)** pushes the ceremony past `validBefore` → a born-expired signature wastes facilitator gas + forces a retry (griefing, distinct from outright DoS W9) | The **minimum-window invariant** (§4.8/M1): `validBefore − validAfter` ≥ worst-case ceremony budget, and the adapter's ceremony timeout fires **before** `validBefore` → it surfaces `CoSignUnavailableError` rather than emitting a doomed signature. Availability-class, not theft; bounded by the same retry handling as W9. |
+| **W11** | **Selective delay (not drop)** — or **benign agent-host clock skew (M3)** — pushes the ceremony / the issued `validBefore` out of sync with chain time → a born-expired (or not-yet-valid) signature wastes facilitator gas + forces a retry (griefing, distinct from outright DoS W9) | The **minimum-window invariant** (§4.8/M1+M3): `validBefore − validAfter` ≥ worst-case ceremony budget **+ max tolerated host clock skew**, the adapter's ceremony timeout fires **before** `validBefore` (surfacing `CoSignUnavailableError`), and **clock/NTP integrity** is on the deployment checklist (next to W10). Availability-class, not theft; bounded by the same retry handling as W9. |
+| **W12** | **Authenticated agent compromised / prompt-injected → in-policy drain (M1)** | The agent is the named untrusted party (constraint 2) and the most-likely-compromised component; an authenticated agent that passes A3/mTLS can still stream **in-policy** payments. Bounded **not** by authentication but by the **atomic cumulative `SpendState` cap** (the backstop — the ledger commits it atomically, §4.3 step 2(f), durably §4.6/C1). M6-1 **T3** covers the *out-of-policy* request (deny-closed, no share); this is the *in-policy* residual. Distinct from **W5** (forged requester) and the bypass threats (`THREAT_MODEL` 5.2 / 1.14). Defence is layered: a tight per-deployment cap + agent-framework guardrails. |
 
 **Carried, unchanged (the standing gate):** **T1 key extraction** and **T2 unaudited
 crypto** (M6-1 §5) — no wire mechanism saves the key-extraction class; the audit (or a swap
@@ -584,7 +637,9 @@ M6-3a adds the wire-specific suite:
    re-open the durable store)**, replay N → still exactly **one** cap-commit, the cached signature
    returned (not a re-run), the cumulative cap reflects the prior commit (not reset); a crashed
    mid-ceremony reservation is reclaimed by the TTL. (Proven at the store level in
-   `kawasekit-mpc-2p tests/durable_store.rs`.) The headline wire + durability test.
+   `kawasekit-mpc-2p tests/durable_store.rs`.) **AND (L3) repeated mid-ceremony connection drops
+   MUST NOT grow the backend's task count / memory** (async cancellation-safety of the wss
+   ceremony handler). The headline wire + durability test.
 6. **TLS/mTLS negative** — wrong server cert / missing-required client cert ⇒ connection
    refused; **assert no plaintext intent on the wire** via a packet capture (confidentiality,
    W1); `ws://` rejected by the adapter.
@@ -600,6 +655,11 @@ M6-3a adds the wire-specific suite:
    cross-process topology**, settles a real EIP-3009 `transferWithAuthorization` on Polygon
    Amoy; `from == group EOA`; JPYC moves. This is M6-1 §8's "now with distributed-DKG key +
    full topology" finally exercised end-to-end.
+10. **Agent-side concurrency isolation** (L1) — N parallel `sign()` / `run_sign_over_channel`
+   on **one** shared key share → **every** signature verifies (`ecrecover == group EOA`, low-S)
+   and **no two ceremonies share a nonce** (the per-call isolation of §4.9 is real, not
+   incidental; guards the un-built TS adapter against introducing a shared WASM session).
+   Proven natively in `kawasekit-mpc-2p crypto-core`.
 
 ---
 
