@@ -69,7 +69,8 @@ export {
 } from "./signer/mpc-2p";
 export {
 	type CoSignFrame,
-	canonicalIntentBytes,
+	type CoSignRequestEnvelope,
+	canonicalRequestBytes,
 	toWireIntent,
 	WIRE_VERSION,
 	type WireIntent,
