@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | M6-3a |
 | **Title** | The cross-process / cross-runtime co-sign wire — agent-WASM-in-Node ↔ owner-Rust backend over an authenticated, (m)TLS network channel |
-| **Status** | Draft v2 — **design-first** (kickoff `.claude/m6-3a-kickoff.md`; flow = RFC → `web3-cto-review` → 実装). `web3-cto-review` **pass 1 done; all findings closed** — Sprint 1 (H1 cross-target serialization claim → "verified by test, not by construction"; H2 nonce-reuse-on-retry adapter invariant + call-vs-intent idempotency scope; H3 A3-freshness reframed, fund-safety on nonce-idempotency+SpendState) + Sprint 2 (M1 ceremony-liveness minimum-window invariant + W11; M2 additive `nonce_reuse_conflict` reason / `intent_digest_mismatch` unreachable-by-A4; M3 agent-side `MAX_FRAME_BYTES` bound; M4 mTLS default-for-remote; M5 conditional H1-closure wording) + Sprint 3 (L1 threat-5.2 anchor; L2 exit-path + monitoring cross-ref). The crypto, the backend gate, and the in-Rust transport are **already proven** (M6-1 spike + `kawasekit-mpc-2p` slices 1–11, self-audited); **the un-built piece is the wire across the Node(WASM)↔Rust process/runtime/network boundary** + the SDK adapter that drives it. This RFC specifies that wire and makes it the threat-model protagonist. |
+| **Status** | Draft v3 — **design-first**; **Slice 1 (cross-runtime wire) + C1 (durable store) implemented** in `kawasekit-mpc-2p`. An external CTO review (2026-06-08, source-verified) found one Critical **C1**: the in-memory ledger + idempotency stores made the "at most one cap-commit per (session, nonce)" invariant **false across a restart / sibling instance** (my web3-cto-review **H3** §4.6 claim under-counted the risk — the nonce store was as ephemeral as the freshness set it contrasted). **C1 remediated** (durable, transactional, single-instance **SQLite** store; restart-replay + cap-persistence + TTL conformance tests; §4.6 / constraint 7 / §4.8 / §6 corrected; roadmap §6 adds it as a third engagement-readiness precondition). The review's other findings (M1 in-policy-drain row, M2 response-direction auth, M3 host-clock-skew, L1 concurrency property+test [verified safe], L2 transport-deps supply-chain, L3 async-cancellation, L4 transfer-vs-receive) are RFC-text and tracked for the next pass; L1′ retracted. **(prior:)** `web3-cto-review` **pass 1 done; all findings closed** — Sprint 1 (H1 cross-target serialization claim → "verified by test, not by construction"; H2 nonce-reuse-on-retry adapter invariant + call-vs-intent idempotency scope; H3 A3-freshness reframed, fund-safety on nonce-idempotency+SpendState) + Sprint 2 (M1 ceremony-liveness minimum-window invariant + W11; M2 additive `nonce_reuse_conflict` reason / `intent_digest_mismatch` unreachable-by-A4; M3 agent-side `MAX_FRAME_BYTES` bound; M4 mTLS default-for-remote; M5 conditional H1-closure wording) + Sprint 3 (L1 threat-5.2 anchor; L2 exit-path + monitoring cross-ref). The crypto, the backend gate, and the in-Rust transport are **already proven** (M6-1 spike + `kawasekit-mpc-2p` slices 1–11, self-audited); **the un-built piece is the wire across the Node(WASM)↔Rust process/runtime/network boundary** + the SDK adapter that drives it. This RFC specifies that wire and makes it the threat-model protagonist. |
 | **Author** | k0yote |
 | **Reviewers (invited)** | `web3-cto-review` skill (mandatory pass — the wire's new attacker model is this RFC's burden) |
 | **Milestone** | M6-3a (the next real technical milestone; roadmap §5) — turns the proven backend + the proven seam into a working end-to-end co-sign over a real wire, the first artifact a paying engagement integrates. |
@@ -162,10 +162,15 @@ Inherited from the M6-0 contract, the M6-1 RFC, the proven backend, and `CLAUDE.
    DKLs **ssid** binds each *protocol message* to its ceremony. Three layers, three threats
    (fake server / forged requester / replayed protocol message); none subsumes another.
    (§4.6, §4.8.)
-7. **At most one cap-commit per (session, nonce), under arbitrary wire loss.** The atomic
-   `SpendState` (H3) + idempotency-by-nonce (B7) must compose so that any number of
-   mid-ceremony drops and retries collapse to a single committed spend. M6-3a's burden is to
-   **exercise** this over a lossy wire, not to redesign it. (§4.7.)
+7. **At most one cap-commit per (session, nonce) — under arbitrary wire loss AND across a
+   restart / sibling instance.** The atomic `SpendState` (H3) + idempotency-by-nonce (B7) must
+   compose so that any number of mid-ceremony drops and retries collapse to a single committed
+   spend. **(C1) This requires the `{nonce, SpendState}` store to be durable, transactional, and
+   single-writer (one instance) — or shared-transactional with a unique `(session, nonce)`
+   constraint for HA — with a reservation TTL so a crashed mid-ceremony reservation does not leak
+   budget.** An in-memory, per-process store satisfies the invariant only within one continuous
+   run (a restart re-admits a replayed nonce as fresh and re-commits the cap; N instances ⇒ N×
+   the cap). M6-3a exercises this over a lossy wire **and** across a restart (§4.7, §4.8, §6).
 8. **SDK stays TypeScript; backend stays a self-hostable Rust binary.** The SDK talks to the
    adapter through the M6-0 `PolicyGatedSigner` interface (mechanism-independent). M6-3a adds
    one new export (`createMpc2pPolicyGatedSigner`) — additive, a `0.2.x`/minor, never a
@@ -375,16 +380,19 @@ for the wire:
   `freshness` is a timestamp + a per-request nonce **distinct from the EIP-3009 nonce**. The
   HMAC binds the request to *this* share+policy session, *this* ceremony, and *this* exact
   intent (so a captured request cannot have its `to`/`value` altered without breaking it).
-- **Where fund-safety-under-replay actually rests (H3).** It rests on **idempotency-by-nonce
-  + atomic SpendState** (§4.7), **not** on the freshness element. A replayed `request`
-  carrying the same EIP-3009 nonce collapses to the idempotent committed result regardless of
-  freshness; the HMAC prevents tampering with the amount/recipient. The `freshness` element is
-  therefore a **best-effort DoS/dedup + ceremony-start guard**, *not* a fund boundary: it is
-  bounded by a clock-skew acceptance window, and **fund-safety does not depend on the
-  seen-`freshness` set surviving a backend restart or being shared across backend instances**
-  (a replay after a restart, or to a sibling instance, is still bounded to one cap-commit by
-  the nonce store). We deliberately do **not** spec a distributed replay cache the design does
-  not need.
+- **Where fund-safety-under-replay actually rests (H3 + C1).** It rests on **idempotency-by-nonce
+  + atomic SpendState** (§4.7) **persisted in a durable, transactional store** — **not** on the
+  freshness element. A replayed `request` carrying the same EIP-3009 nonce collapses to the
+  idempotent committed result; the HMAC prevents tampering with the amount/recipient. The
+  `freshness` element is therefore a **best-effort DoS/dedup + ceremony-start guard**, *not* a
+  fund boundary (it is bounded by a clock-skew acceptance window). **Critical (C1): the nonce
+  store + SpendState themselves must be durable, transactional, and single-writer (one instance)
+  — or shared-transactional with a unique `(session, nonce)` constraint for HA — for the
+  replay-after-restart / sibling-instance bound to hold.** An in-memory, per-process store is
+  empty after a restart, so a replayed nonce is re-admitted as `Fresh` and the cap re-committed
+  (and N instances ⇒ N× the cap); that is exactly as ephemeral as the freshness set. v1 ships a
+  durable single-instance store (SQLite); §3 constraint 7 states the invariant, §4.8 the
+  deployment topology, and §6 the restart-replay conformance test.
 - **Canonical intent bytes.** `canonical(intent)` uses the **same pinned encoding** as the
   B8 corpus (decimal-string `uint256`, EIP-55 addresses, fixed field order;
   `src/tokens/__fixtures__`), so the agent and backend HMAC the same bytes — no
@@ -474,6 +482,15 @@ The owner self-hosts the backend, so transport security is part of the deliverab
   breaks one layer still faces the others; and even a perfect MITM cannot produce a valid
   signature (it lacks the owner share) — the worst case degrades to DoS or an
   audit-gated attempt to extract share information (T1/T2, unchanged, §8).
+- **Durable-store topology (C1).** The owner backend persists the `{nonce, SpendState}` store so
+  the at-most-one-cap-commit invariant survives a restart (§3 constraint 7). **v1 = a single
+  owner-hosted instance + a durable embedded store** (SQLite, single-writer) — the realistic
+  owner-hosted topology, and the form M6-3a ships/tests. **Multi-instance HA** (several backend
+  instances behind a load balancer) instead requires a **shared-transactional** store with a
+  unique `(session, nonce)` constraint; it is a stated deployment **precondition** — not
+  value-gated, since testnet must validate the full restart/HA risk surface — satisfied by a
+  shared-store impl behind the same store trait (no gate-path change). Note an LB/reverse-proxy
+  in front of *one* backend instance (TLS termination) is the single-instance case, not HA.
 
 **Ceremony-liveness minimum-window invariant (M1).** The multi-round DKLs ceremony + the TLS
 handshake(s) + the bounded transient-retry budget all elapse **inside** the EIP-3009
@@ -516,7 +533,7 @@ threat sharpens an M6-1 threat, the cross-reference is noted.
 |---|---|---|
 | **W1** | **Passive eavesdropper** reads the intent (payer/payee/amount) and DKLs payloads | **TLS (wss)** confidentiality + cert pinning (§4.8). The intent is payment metadata; DKLs payloads are ssid-bound but still encrypted. (Sharpens M6-1 T5.) |
 | **W2** | **Active MITM / fake backend** impersonates the owner endpoint to harvest the ceremony or feed forged rounds | **TLS server-auth + CA/cert pinning** (+ **mTLS default for remote endpoints**, M4 §4.8) → the agent authenticates the real backend; **DKLs ssid** binding makes cross-session injection fail; the **agent-side `MAX_FRAME_BYTES` bound** (M3 §4.2) blocks an OOM via over-large payload; and a fake backend **cannot produce a valid signature** (no owner share) — worst case = DoS or an audit-gated share-info-extraction attempt (T1/T2). (Sharpens M6-1 T5.) |
-| **W3** | **Replay of a captured `request`** to trigger a duplicate co-sign | **Fund-safety rests on idempotency-by-nonce + atomic SpendState** (§4.7) — a replay with the same EIP-3009 nonce collapses to the one committed result, and the HMAC fixes `to`/`value`. **A3 freshness** (timestamp + per-request nonce) + **ssid** is a *best-effort* DoS/dedup + ceremony-start guard (bounded by a clock-skew window; not a fund boundary, and it need not survive a restart — H3 §4.6). |
+| **W3** | **Replay of a captured `request`** to trigger a duplicate co-sign (incl. after a restart) | Fund-safety rests on idempotency-by-nonce + atomic SpendState (§4.7) **persisted in a durable, single-writer/shared-transactional store** — a replay with the same EIP-3009 nonce collapses to the one committed result *only because that store survives a restart* (C1, §4.6 / constraint 7); the HMAC fixes `to`/`value`. A3 freshness + ssid is a *best-effort* DoS/dedup guard (not a fund boundary). |
 | **W4** | **Mid-flight loss → double-commit of the cumulative cap** (TOCTOU re-opened by the wire) | Atomic `SpendState` check-and-commit (H3) **keyed to nonce-idempotency** (B7) + **restart-not-resume** + the **adapter retry-reuses-identical-intent invariant** (§4.7/H2 — the adapter must never regenerate the nonce on retry): at most one commit per (session, nonce) under arbitrary loss/retry. **Exercised by fault injection** (§6/test 5). (Sharpens M6-1 T7.) |
 | **W5** | **Forged requester** on the wire solicits a co-sign | **A3** HMAC over canonical request (+ optional mTLS) → `unauthenticated`; **auth ≠ authz** (still full policy eval). (Sharpens M6-1 T6.) |
 | **W6** | **Cross-session message injection** — a round message from ceremony A injected into ceremony B | **DKLs ssid** binds each protocol message to its ceremony (crypto-level); envelope `ceremonyId` routing; the counterparty's phase checks reject a mis-bound message. (Sharpens M6-1 T5.) |
@@ -560,10 +577,14 @@ M6-3a adds the wire-specific suite:
    log + a wire capture showing zero `round` frames).
 4. **A3 negative** — forged / absent / stale authenticator ⇒ `unauthenticated`, no rounds.
    Replayed authenticator (W3) ⇒ rejected on freshness.
-5. **Retry × idempotency fault injection** (W4) — kill the connection/response at each step
-   of §4.3; assert **exactly one cap-commit** per (session, nonce), the idempotent signature
-   returned on retry, and same-nonce/different-fields ⇒ deny + audit. The headline wire
-   test.
+5. **Retry × idempotency fault injection + restart durability** (W4 / C1) — kill the
+   connection/response at each step of §4.3; assert **exactly one cap-commit** per (session,
+   nonce), the idempotent signature returned on retry, and same-nonce/different-fields ⇒ deny +
+   audit. **AND across a restart**: complete a co-sign for nonce N, **restart the backend (drop +
+   re-open the durable store)**, replay N → still exactly **one** cap-commit, the cached signature
+   returned (not a re-run), the cumulative cap reflects the prior commit (not reset); a crashed
+   mid-ceremony reservation is reclaimed by the TTL. (Proven at the store level in
+   `kawasekit-mpc-2p tests/durable_store.rs`.) The headline wire + durability test.
 6. **TLS/mTLS negative** — wrong server cert / missing-required client cert ⇒ connection
    refused; **assert no plaintext intent on the wire** via a packet capture (confidentiality,
    W1); `ws://` rejected by the adapter.
