@@ -80,8 +80,8 @@ export interface PaymentIntent {
  * The evaluator (`evaluateSpendingPolicy`) emits the `revoked` / `expired` /
  * `token_not_allowed` / `recipient_not_allowed` / `amount_exceeds_*` reasons;
  * the adapter additionally emits `from_mismatch` and (for `mpc-2p`)
- * `intent_digest_mismatch` / `unauthenticated`. The consumer handles one
- * `SignResult` regardless of adapter.
+ * `intent_digest_mismatch` / `unauthenticated` / `nonce_reuse_conflict`. The
+ * consumer handles one `SignResult` regardless of adapter.
  */
 export interface PolicyRejection {
 	readonly reason:
@@ -93,7 +93,15 @@ export interface PolicyRejection {
 		| "amount_exceeds_cumulative"
 		| "intent_digest_mismatch"
 		| "unauthenticated"
-		| "from_mismatch";
+		| "from_mismatch"
+		/**
+		 * (`mpc-2p`) The co-signer was presented a **previously-seen EIP-3009
+		 * nonce with different intent fields** — the B7 same-nonce/different-fields
+		 * fund-correctness anomaly. The backend denies + audits it; double-pay
+		 * protection (same nonce, same fields → cached result) is a separate,
+		 * non-rejection path (M5 `deriveAuthorizationNonce` + `authorizationState`).
+		 */
+		| "nonce_reuse_conflict";
 	/** Human-readable reason; never contains the nonce or a signature. */
 	readonly detail: string;
 }

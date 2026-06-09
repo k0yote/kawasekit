@@ -52,12 +52,28 @@ export {
 	type SpendState,
 	type TokenLimit,
 } from "./policy/spending-policy";
-export { PolicyGatedSignerConfigError } from "./signer/errors";
+export { CoSignUnavailableError, PolicyGatedSignerConfigError } from "./signer/errors";
 export { assertNonBypassable, requireNonBypassable } from "./signer/gate";
 export {
 	type CreateLocalPolicyGatedSignerParams,
 	createLocalPolicyGatedSigner,
 } from "./signer/local";
+export {
+	type CoSignConnection,
+	type CoSignRequestAuthenticator,
+	type CoSignTransport,
+	createMpc2pPolicyGatedSigner,
+	type Mpc2pCoSignAgent,
+	type Mpc2pSignerParams,
+	type Mpc2pStepOutcome,
+} from "./signer/mpc-2p";
+export {
+	type CoSignFrame,
+	canonicalIntentBytes,
+	toWireIntent,
+	WIRE_VERSION,
+	type WireIntent,
+} from "./signer/mpc-2p-wire";
 export type {
 	EnforcementLevel,
 	NonBypassableEnforcement,
