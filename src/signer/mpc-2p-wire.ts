@@ -26,6 +26,16 @@ import type { PaymentIntent } from "./types";
 export const WIRE_VERSION = 2 as const;
 
 /**
+ * The inbound round-payload bound, in bytes — mirrors the backend's
+ * `crypto-core/src/transport.rs` `MAX_FRAME_BYTES` (8 MiB) so the agent side
+ * enforces the same pre-decode cap the backend does (RFC m6-3a §4.2/M3). The
+ * adapter refuses an over-bound `round` payload **before** hex-decoding it into
+ * the WASM boundary; the private transport should additionally cap raw
+ * websocket messages (e.g. the `ws` client's `maxPayload`).
+ */
+export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
+
+/**
  * The string-encoded EIP-3009 intent as it crosses the wire — lowercase `0x`
  * addresses, **decimal** integer strings, `0x` hex nonce. Decoupled from any
  * library's native serde so a stdlib client reproduces it trivially; matches the

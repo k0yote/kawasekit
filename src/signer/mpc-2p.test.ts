@@ -1,5 +1,5 @@
 import type { Address, Hex } from "viem";
-import { getAddress, hashTypedData, serializeSignature } from "viem";
+import { getAddress, hashTypedData, parseSignature, serializeSignature } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createSpendingPolicy } from "../policy/spending-policy";
@@ -16,6 +16,7 @@ import {
 	createMpc2pPolicyGatedSigner,
 	type Mpc2pCoSignAgent,
 	type Mpc2pStepOutcome,
+	type Mpc2pWireOptions,
 } from "./mpc-2p";
 import { type CoSignFrame, type CoSignRequestEnvelope, canonicalRequestBytes } from "./mpc-2p-wire";
 import type { NonBypassableEnforcement, PaymentIntent, PolicyGatedSigner } from "./types";
@@ -26,8 +27,6 @@ const TO = getAddress("0x209693Bc6afc0C5328bA36FaF03C514EF312287C");
 const ASSET = { kind: "known", id: "jpyc-v2" } as const;
 const SESSION = { id: "sess-1", notAfter: 2_000_000_000n };
 const NONCE = `0x${"1".repeat(64)}` as Hex;
-
-const SIG = { r: `0x${"aa".repeat(32)}` as Hex, s: `0x${"bb".repeat(32)}` as Hex, v: 27 };
 
 function intent(over: Partial<PaymentIntent> = {}): PaymentIntent {
 	return {
@@ -59,6 +58,17 @@ function expectedDigest(i: PaymentIntent): Hex {
 		},
 	});
 }
+
+// FROM's well-known test key (anvil account #1): the adapter now performs the RFC
+// §4.4 ecrecover/low-S self-check on every result, so the mock signature must be a
+// REAL low-S signature over the canonical test intent's digest, recovering to FROM.
+const FROM_ACCOUNT = privateKeyToAccount(
+	"0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+);
+const SIG = await (async () => {
+	const parsed = parseSignature(await FROM_ACCOUNT.sign({ hash: expectedDigest(intent()) }));
+	return { r: parsed.r, s: parsed.s, v: Number(parsed.yParity) + 27 };
+})();
 
 // --- mocks -----------------------------------------------------------------
 
@@ -148,6 +158,7 @@ function makeSigner(
 		agent?: Mpc2pCoSignAgent;
 		transport?: CoSignTransport;
 		authenticator?: CoSignRequestAuthenticator;
+		wire?: Mpc2pWireOptions;
 	} = {},
 ): PolicyGatedSigner<"cryptographic"> {
 	return createMpc2pPolicyGatedSigner({
@@ -158,6 +169,7 @@ function makeSigner(
 		transport:
 			over.transport ?? mockTransport(mockConn([round("0xb1"), result(SIG.r, SIG.s, SIG.v)])),
 		authenticator: over.authenticator ?? mockAuth(),
+		...(over.wire === undefined ? {} : { wire: over.wire }),
 	});
 }
 
@@ -222,7 +234,7 @@ describe("createMpc2pPolicyGatedSigner — sign (success)", () => {
 		const res = await s.sign(i);
 		expect(res.ok).toBe(true);
 		if (!res.ok) throw new Error("unreachable");
-		expect(res.signature).toBe(serializeSignature({ r: SIG.r, s: SIG.s, yParity: 0 }));
+		expect(res.signature).toBe(serializeSignature({ r: SIG.r, s: SIG.s, yParity: SIG.v - 27 }));
 		expect(res.intent).toBe(i);
 		expect(conn.closed).toBe(1);
 	});
@@ -330,11 +342,12 @@ describe("createMpc2pPolicyGatedSigner — no-silent-fallback", () => {
 		).rejects.toBeInstanceOf(CoSignUnavailableError);
 	});
 
-	it("throws when a result arrives before the agent has a signature", async () => {
-		// recv yields result immediately; the agent never produced a signature.
-		const conn = mockConn([result(SIG.r, SIG.s, SIG.v)]);
+	it("throws when a roundless result does NOT recover to the group EOA (fake sig)", async () => {
+		// A garbage r/s cannot pass the §4.4 ecrecover self-check that guards the
+		// roundless (idempotent-replay) acceptance path.
+		const conn = mockConn([result(`0x${"aa".repeat(32)}`, `0x${"1b".repeat(32)}`, 27)]);
 		await expect(
-			makeSigner({ transport: mockTransport(conn) }).sign(intent()),
+			makeSigner({ transport: mockTransport(conn), wire: { maxAttempts: 1 } }).sign(intent()),
 		).rejects.toBeInstanceOf(CoSignUnavailableError);
 	});
 
@@ -367,5 +380,170 @@ describe("createMpc2pPolicyGatedSigner — no-silent-fallback", () => {
 		await expect(
 			makeSigner({ transport: mockTransport(conn) }).sign(intent()),
 		).rejects.toBeInstanceOf(CoSignUnavailableError);
+	});
+});
+
+// --- 4b: transient-only retry (RFC §4.7/H2) --------------------------------
+
+describe("createMpc2pPolicyGatedSigner — transient retry (4b)", () => {
+	const fail = () => {
+		throw new Error("boom");
+	};
+
+	it("retries a mid-ceremony drop: byte-identical intent under a FRESH A3 envelope", async () => {
+		const agent = mockAgent({ steps: [{ signature: SIG }] });
+		const conn1 = mockConn([fail]); // drops after request + first round were sent
+		const conn2 = mockConn([round("0xb1"), result(SIG.r, SIG.s, SIG.v)]);
+		const conns = [conn1, conn2];
+		const connect = vi.fn(async (): Promise<CoSignConnection> => {
+			const c = conns.shift();
+			if (!c) throw new Error("no more scripted connections");
+			return c;
+		});
+		const auth = mockAuth();
+		const i = intent();
+		const res = await makeSigner({ agent, transport: { connect }, authenticator: auth }).sign(i);
+
+		expect(res.ok).toBe(true);
+		expect(connect).toHaveBeenCalledTimes(2);
+		const [req1, req2] = [conn1.sent[0], conn2.sent[0]];
+		if (req1?.kind !== "request" || req2?.kind !== "request") throw new Error("unreachable");
+		// H2: the EIP-3009 intent (nonce included) is replayed byte-identically…
+		expect(req2.intent).toEqual(req1.intent);
+		// …under a FRESH A3 envelope (the backend's freshness anti-replay requires it).
+		expect(req2.ceremony_id).not.toBe(req1.ceremony_id);
+		expect(req2.freshness_nonce).not.toBe(req1.freshness_nonce);
+		expect(auth.inputs).toHaveLength(2);
+		// One intent ⇒ one digest, for every attempt.
+		expect(agent.startedWith).toEqual([expectedDigest(i), expectedDigest(i)]);
+		// The dropped connection was still closed (no leak).
+		expect(conn1.closed).toBe(1);
+		expect(conn2.closed).toBe(1);
+	});
+
+	it("retries a failed connect and succeeds on the second attempt", async () => {
+		let attempts = 0;
+		const conn = mockConn([round("0xb1"), result(SIG.r, SIG.s, SIG.v)]);
+		const connect = vi.fn(async (): Promise<CoSignConnection> => {
+			attempts += 1;
+			if (attempts === 1) throw new Error("ECONNREFUSED");
+			return conn;
+		});
+		const res = await makeSigner({ transport: { connect } }).sign(intent());
+		expect(res.ok).toBe(true);
+		expect(connect).toHaveBeenCalledTimes(2);
+	});
+
+	it("does NOT retry a delivered policy rejection", async () => {
+		const connect = vi.fn(async () => mockConn([reject("revoked", "owner pulled the plug")]));
+		const res = await makeSigner({ transport: { connect } }).sign(intent());
+		expect(res.ok).toBe(false);
+		if (res.ok) throw new Error("unreachable");
+		expect(res.rejection.reason).toBe("revoked");
+		expect(connect).toHaveBeenCalledTimes(1);
+	});
+
+	it("does NOT retry a ban (non-policy rejection): single attempt, throws", async () => {
+		const connect = vi.fn(async () => mockConn([reject("banned", "counterparty cheated")]));
+		await expect(makeSigner({ transport: { connect } }).sign(intent())).rejects.toBeInstanceOf(
+			CoSignUnavailableError,
+		);
+		expect(connect).toHaveBeenCalledTimes(1);
+	});
+
+	it("exhausts maxAttempts then throws the last transient error", async () => {
+		const connect = vi.fn(async (): Promise<CoSignConnection> => {
+			throw new Error("ECONNREFUSED");
+		});
+		const err = await makeSigner({ transport: { connect } })
+			.sign(intent())
+			.catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(CoSignUnavailableError);
+		if (!(err instanceof CoSignUnavailableError)) throw new Error("unreachable");
+		expect(err.transient).toBe(true);
+		expect(connect).toHaveBeenCalledTimes(2); // default maxAttempts = 2
+	});
+
+	it("maxAttempts: 1 disables the retry entirely", async () => {
+		const connect = vi.fn(async (): Promise<CoSignConnection> => {
+			throw new Error("ECONNREFUSED");
+		});
+		await expect(
+			makeSigner({ transport: { connect }, wire: { maxAttempts: 1 } }).sign(intent()),
+		).rejects.toBeInstanceOf(CoSignUnavailableError);
+		expect(connect).toHaveBeenCalledTimes(1);
+	});
+});
+
+// --- 4b: the roundless idempotent-replay result (RFC §4.7) ------------------
+
+describe("createMpc2pPolicyGatedSigner — idempotent-replay result", () => {
+	it("accepts a roundless result whose signature recovers to the group EOA", async () => {
+		// The backend's idempotency-by-nonce returns the CACHED signature with zero
+		// rounds; the adapter verifies it by recovery over its own digest (§4.4).
+		const conn = mockConn([result(SIG.r, SIG.s, SIG.v)]);
+		const i = intent();
+		const res = await makeSigner({ transport: mockTransport(conn) }).sign(i);
+		expect(res.ok).toBe(true);
+		if (!res.ok) throw new Error("unreachable");
+		expect(res.signature).toBe(serializeSignature({ r: SIG.r, s: SIG.s, yParity: SIG.v - 27 }));
+		expect(res.intent).toBe(i);
+	});
+
+	it("rejects a roundless result signed by a DIFFERENT key (valid sig, wrong recovery)", async () => {
+		const other = privateKeyToAccount(`0x${"2".repeat(64)}`);
+		const parsed = parseSignature(await other.sign({ hash: expectedDigest(intent()) }));
+		const conn = mockConn([result(parsed.r, parsed.s, Number(parsed.yParity) + 27)]);
+		await expect(
+			makeSigner({ transport: mockTransport(conn), wire: { maxAttempts: 1 } }).sign(intent()),
+		).rejects.toBeInstanceOf(CoSignUnavailableError);
+	});
+});
+
+// --- 4c: liveness window + ceremony deadline + inbound bound ----------------
+
+describe("createMpc2pPolicyGatedSigner — liveness + bounds (4c)", () => {
+	it("refuses up front when validBefore leaves under the minimum window (W11)", async () => {
+		const connect = vi.fn();
+		const s = makeSigner({ transport: { connect } });
+		const tooClose = BigInt(Math.floor(Date.now() / 1000) + 10); // < default 30s + 30s skew
+		await expect(s.sign(intent({ validBefore: tooClose }))).rejects.toBeInstanceOf(
+			CoSignUnavailableError,
+		);
+		expect(connect).not.toHaveBeenCalled();
+	});
+
+	it("times out a hung ceremony (deadline fires; the connection is closed; no retry)", async () => {
+		let closed = 0;
+		const conn: CoSignConnection = {
+			send: async () => {},
+			recv: () => new Promise<never>(() => {}), // hangs forever
+			close: () => {
+				closed += 1;
+			},
+		};
+		const connect = vi.fn(async () => conn);
+		const s = makeSigner({
+			transport: { connect },
+			wire: { ceremonyTimeoutMs: 60 },
+		});
+		await expect(s.sign(intent())).rejects.toThrow(/timed out/);
+		expect(closed).toBe(1);
+		// A deadline strike is NOT the transient class — it must not re-spin.
+		expect(connect).toHaveBeenCalledTimes(1);
+	});
+
+	it("refuses an over-bound inbound round payload BEFORE the WASM boundary (M3)", async () => {
+		const agent = mockAgent({ steps: [] });
+		const stepSpy = vi.spyOn(agent, "step");
+		const big = `0x${"00".repeat(2_049)}` as Hex; // 2 049 bytes > the 2 048 test bound
+		const conn = mockConn([round(big)]);
+		const s = makeSigner({
+			agent,
+			transport: mockTransport(conn),
+			wire: { maxFrameBytes: 2_048, maxAttempts: 1 },
+		});
+		await expect(s.sign(intent())).rejects.toThrow(/round frame/);
+		expect(stepSpy).not.toHaveBeenCalled();
 	});
 });
