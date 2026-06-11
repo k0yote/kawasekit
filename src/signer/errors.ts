@@ -65,8 +65,17 @@ export class PolicyGatedSignerConfigError extends Error {
  * ```
  */
 export class CoSignUnavailableError extends Error {
-	constructor(message: string, options?: { cause?: unknown }) {
-		super(message, options);
+	/**
+	 * `true` when the failure is the **transient transport class** (connect failed /
+	 * connection dropped) — the only class the adapter's bounded retry replays
+	 * (RFC m6-3a §4.7: never a delivered rejection, never a ban/identifiable-abort,
+	 * never a protocol anomaly or timeout). Defaults to `false`.
+	 */
+	readonly transient: boolean;
+
+	constructor(message: string, options?: { cause?: unknown; transient?: boolean }) {
+		super(message, options?.cause === undefined ? undefined : { cause: options.cause });
 		this.name = "CoSignUnavailableError";
+		this.transient = options?.transient ?? false;
 	}
 }

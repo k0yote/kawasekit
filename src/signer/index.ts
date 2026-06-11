@@ -18,11 +18,13 @@ export {
 	type Mpc2pCoSignAgent,
 	type Mpc2pSignerParams,
 	type Mpc2pStepOutcome,
+	type Mpc2pWireOptions,
 } from "./mpc-2p";
 export {
 	type CoSignFrame,
 	type CoSignRequestEnvelope,
 	canonicalRequestBytes,
+	MAX_FRAME_BYTES,
 	toWireIntent,
 	WIRE_VERSION,
 	type WireIntent,
