@@ -664,6 +664,16 @@ M6-3a adds the wire-specific suite:
    cross-process topology**, settles a real EIP-3009 `transferWithAuthorization` on Polygon
    Amoy; `from == group EOA`; JPYC moves. This is M6-1 §8's "now with distributed-DKG key +
    full topology" finally exercised end-to-end.
+   **→ DONE (2026-06-13).** Tx
+   `0xc5c40c1a751ff8c6ff2601e7f200fe3051e06c7f387c8803d7d6ed4f0deaf406` (Amoy block
+   40052657): `from ==` the distributed-DKG group EOA
+   `0xa1911B966B69186381382A21E84c75A9fCb8eCfb`; 0.001 JPYC moved;
+   `authorizationState(from, nonce)` flipped true; broadcast by a non-recipient, gas-only
+   facilitator. Topology: `kawasekit-example` agent (WASM agent share, local Node) ↔
+   Railway `cosign_server` (sealed owner share, C1 SQLite on a persistent volume) over the
+   v2 `CoSignFrame` wire on wss + mandatory mTLS (Railway raw-TCP proxy), through the full
+   x402 paywall flow (`wrapFetch` → 402 → co-sign → `X-PAYMENT` → self-facilitator
+   settle). B5 backups of both shares were taken and verified before funding.
 10. **Agent-side concurrency isolation** (L1) — N parallel `sign()` / `run_sign_over_channel`
    on **one** shared key share → **every** signature verifies (`ecrecover == group EOA`, low-S)
    and **no two ceremonies share a nonce** (the per-call isolation of §4.9 is real, not
@@ -684,6 +694,7 @@ The honest ledger, so the RFC does not overclaim. (Mirrors M6-1 §7.)
 | transport (in-Rust) | `transport::Channel` (in-mem duplex **+ TCP-loopback**); `run_sign_over_channel` / `run_keygen_over_channel` per-endpoint drivers; bincode DKLs-schema round-trip (`MAX_FRAME_BYTES`-bounded) | `kawasekit-mpc-2p` slices 4–5 |
 | gate | `CoSignBackend.cosign` = A3 verify → A4 re-derive → policy → **atomic SpendState** → contribute; audit; `RevocationRegistry`; **idempotency-by-nonce**; multi-session; ban→permanent-revoke; settle persistence; encrypted-at-rest shares — **self-audited, fully remediated** | `kawasekit-mpc-2p` (`docs/SELF-AUDIT.md`) |
 | SDK seam | `PolicyGatedSigner<E>`, `requireNonBypassable`, `PaymentIntent`, `SpendingPolicy`, x402 wiring; **EIP-712 single source of truth** + `resolvedAssetToEip3009Domain` + the **digest-conformance corpus** the backend consumes | M6-0 (on main) + M6-2 slice 1 (`7285cc4`) |
+| **E2E (§6 test 9)** | the full M6-3a DoD on testnet: distributed-DKG key, agent/owner shares on **separate hosts** (local Node WASM ↔ Railway), v2 wire over wss+mTLS, policy-gated co-sign, real JPYC settle, `from == group EOA` | tx `0xc5c40c1a751ff8c6ff2601e7f200fe3051e06c7f387c8803d7d6ed4f0deaf406` (Amoy block 40052657, 2026-06-13) — next to M6-1 Stage 4's `0x4720be99…` |
 
 ### 7.2 NOT yet built — what M6-3a closes (do not overclaim)
 
