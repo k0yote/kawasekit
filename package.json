@@ -1,6 +1,6 @@
 {
 	"name": "kawasekit",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"description": "TypeScript SDK for stablecoin payments by AI agents. Japan-first, JPYC-native.",
 	"license": "Apache-2.0",
 	"author": "k0yote",
