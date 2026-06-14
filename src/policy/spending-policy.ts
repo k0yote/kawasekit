@@ -23,6 +23,7 @@
 import type { Address } from "viem";
 import { getAddress } from "viem";
 import type { PaymentIntent, PolicyRejection } from "../signer/types";
+import { normalizeRecipientAllowlist } from "./normalize-allowlist";
 
 /** Per-token spend limits. A token absent from the policy's `perToken` is NOT allowed. */
 export interface TokenLimit {
@@ -48,6 +49,11 @@ export interface SpendingPolicy {
 	 * Recipient restriction (**required** — no silent allow-open default):
 	 * `"any"` = unrestricted, `[]` = deny-all, `[...]` = allowlist. Making
 	 * `"any"` explicit keeps the policy deny-closed like `perToken`.
+	 *
+	 * The on-chain {@link createJpycDailyLimitPolicies} takes the same
+	 * `Address[] | "any"` shape, with two on-chain-forced differences: it is
+	 * optional (omitted = `"any"`), and `[]` throws there (an on-chain allowlist
+	 * cannot encode deny-all).
 	 */
 	readonly recipientAllowlist: readonly Address[] | "any";
 	readonly revoked: boolean;
@@ -164,9 +170,11 @@ export interface CreateSpendingPolicyParams {
 
 /**
  * Validate + normalize a {@link SpendingPolicy}. Checksums all addresses
- * (`getAddress`), rejects an empty `perToken` (deny-closed), a non-positive
- * `maxPerSign`/`cumulativeCap`, a `cumulativeCap < maxPerSign`, and duplicate
- * tokens. Throws {@link SpendingPolicyConfigError} on violation.
+ * (`getAddress`), de-dupes the recipient allowlist (shared
+ * {@link normalizeRecipientAllowlist}; `[]` stays deny-all), rejects an empty
+ * `perToken` (deny-closed), a non-positive `maxPerSign`/`cumulativeCap`, a
+ * `cumulativeCap < maxPerSign`, and duplicate tokens. Throws
+ * {@link SpendingPolicyConfigError} on violation.
  *
  * @example
  * ```ts
@@ -225,10 +233,12 @@ export function createSpendingPolicy(params: CreateSpendingPolicyParams): Spendi
 		return { token, maxPerSign: l.maxPerSign };
 	});
 
+	// Checksum-normalize + de-dupe the allowlist (shared with the on-chain
+	// daily-limit path). `[]` stays `[]` — deny-all is a valid off-chain policy.
 	const recipientAllowlist =
 		params.recipientAllowlist === "any"
 			? "any"
-			: params.recipientAllowlist.map((a) => getAddress(a));
+			: normalizeRecipientAllowlist(params.recipientAllowlist);
 
 	return {
 		version: "1",
