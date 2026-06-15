@@ -20,15 +20,9 @@
  */
 
 import type { Policy } from "@zerodev/permissions";
-import {
-	CallPolicyVersion,
-	ParamCondition,
-	toCallPolicy,
-	toRateLimitPolicy,
-} from "@zerodev/permissions/policies";
+import { type CallPolicyVersion, toRateLimitPolicy } from "@zerodev/permissions/policies";
 import type { Address } from "viem";
-import { jpycAbi } from "../tokens/jpyc";
-import { normalizeRecipientAllowlist } from "./normalize-allowlist";
+import { buildJpycTransferCallPolicy } from "./jpyc-call-policy";
 
 /** One day in seconds — the period for {@link createJpycDailyLimitPolicies}. */
 export const ONE_DAY_SECONDS = 86_400;
@@ -109,57 +103,19 @@ export interface CreateJpycDailyLimitPoliciesParams {
 export function createJpycDailyLimitPolicies(
 	params: CreateJpycDailyLimitPoliciesParams,
 ): readonly [Policy, Policy] {
-	if (params.maxPerTransfer <= 0n) {
-		throw new Error(
-			`createJpycDailyLimitPolicies: maxPerTransfer must be positive, got ${params.maxPerTransfer}.`,
-		);
-	}
 	if (!Number.isInteger(params.maxTransfersPerDay) || params.maxTransfersPerDay < 1) {
 		throw new Error(
 			`createJpycDailyLimitPolicies: maxTransfersPerDay must be a positive integer, got ${params.maxTransfersPerDay}.`,
 		);
 	}
-	// Resolve the recipient constraint up-front. Omitted or "any" => unrestricted
-	// (a `null` arg); an address list => checksum-normalized + de-duped (shared
-	// with the off-chain SpendingPolicy). Unlike off-chain, an empty list is a
-	// caller bug here — an on-chain allowlist cannot encode "deny all".
-	const recipients =
-		params.recipientAllowlist === undefined || params.recipientAllowlist === "any"
-			? null
-			: normalizeRecipientAllowlist(params.recipientAllowlist);
-	if (recipients !== null && recipients.length === 0) {
-		throw new Error(
-			'createJpycDailyLimitPolicies: recipientAllowlist must not be empty — omit it or pass "any" to allow any recipient.',
-		);
-	}
-	// The ONE_OF condition (used to encode an address list) is only supported by
-	// the V0_0_2+ CallPolicy contract; catch the incompatible combination here
-	// with a typed message rather than a bare error from deep inside toCallPolicy.
-	if (recipients !== null && params.callPolicyVersion === CallPolicyVersion.V0_0_1) {
-		throw new Error(
-			"createJpycDailyLimitPolicies: recipientAllowlist requires callPolicyVersion V0_0_2 or later (the ONE_OF condition is unsupported on V0_0_1).",
-		);
-	}
 
-	const callPolicy = toCallPolicy({
-		policyVersion: params.callPolicyVersion ?? CallPolicyVersion.V0_0_4,
-		permissions: [
-			{
-				target: params.jpycAddress,
-				abi: jpycAbi,
-				functionName: "transfer",
-				args: [
-					// Recipient (`to`): unrestricted (`null`) unless an allowlist resolved
-					// above, in which case it is constrained via the ONE_OF condition.
-					recipients === null ? null : { condition: ParamCondition.ONE_OF, value: recipients },
-					// value: must be ≤ maxPerTransfer.
-					{
-						condition: ParamCondition.LESS_THAN_OR_EQUAL,
-						value: params.maxPerTransfer,
-					},
-				],
-			},
-		],
+	// callPolicy (amount cap + optional recipient allowlist) is the shared builder;
+	// this function adds the daily-window rate limit on top.
+	const callPolicy = buildJpycTransferCallPolicy({
+		jpycAddress: params.jpycAddress,
+		maxPerTransfer: params.maxPerTransfer,
+		recipientAllowlist: params.recipientAllowlist,
+		callPolicyVersion: params.callPolicyVersion,
 	});
 
 	const rateLimitPolicy = toRateLimitPolicy({
