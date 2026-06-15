@@ -1,7 +1,7 @@
 {
 	"name": "observability",
 	"private": true,
-	"version": "0.0.6",
+	"version": "0.0.7",
 	"description": "kawasekit M4-2 example — Prometheus + Grafana wired to the kawasekit observability hooks",
 	"license": "Apache-2.0",
 	"type": "module",

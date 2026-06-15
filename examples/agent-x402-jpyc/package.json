@@ -1,7 +1,7 @@
 {
 	"name": "agent-x402-jpyc",
 	"private": true,
-	"version": "0.0.6",
+	"version": "0.0.7",
 	"description": "kawasekit M3-3 example — Mastra-style agent paying a Hono x402 paywall in JPYC on Polygon Amoy",
 	"license": "Apache-2.0",
 	"type": "module",
