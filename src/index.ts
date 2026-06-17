@@ -30,6 +30,11 @@ export {
 	zerodevRpcUrl,
 } from "./chains";
 export {
+	type CreateSponsoredKernelClientParams,
+	createSponsoredKernelClient,
+	type SponsoredKernelClientObservability,
+} from "./client/sponsored-kernel-client";
+export {
 	type ConfiguredKernelClient,
 	TransferJpycInputError,
 	type TransferJpycParams,
