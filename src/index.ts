@@ -9,6 +9,7 @@
  */
 
 export {
+	type AgentOwner,
 	type CreateAgentSmartAccountParams,
 	createAgentSmartAccount,
 } from "./account/session-key";
@@ -235,6 +236,8 @@ export {
 export { type IssueSessionKeyParams, issueSessionKey } from "./session/issue";
 export { type RestoreSessionAccountParams, restoreSessionAccount } from "./session/restore";
 export {
+	type BuildRevokeSessionKeyCallParams,
+	buildRevokeSessionKeyCall,
 	type RevokeSessionKeyParams,
 	type RevokeSessionKeyResult,
 	revokeSessionKey,

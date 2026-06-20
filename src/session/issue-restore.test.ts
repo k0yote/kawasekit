@@ -15,6 +15,7 @@
  * ZeroDev deserialiser.
  */
 
+import { toSudoPolicy } from "@zerodev/permissions/policies";
 import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
@@ -25,6 +26,7 @@ import {
 	SessionEnvelopeSignerMismatchError,
 	SessionEnvelopeVersionError,
 } from "./errors";
+import { issueSessionKey } from "./issue";
 import { restoreSessionAccount } from "./restore";
 
 const SESSION_KEY_PK =
@@ -120,5 +122,27 @@ describe("restoreSessionAccount — fail-fast invariants (no chain interaction)"
 			expect(err.envelopeSignerAddress.toLowerCase()).toBe(sessionKey.address.toLowerCase());
 			expect(err.providedSignerAddress.toLowerCase()).toBe(stranger.address.toLowerCase());
 		}
+	});
+});
+
+describe("issueSessionKey — owner guard (no chain)", () => {
+	const pc = createPublicClient({ chain: polygonAmoy, transport: http() });
+	const sk = privateKeyToAccount(`0x${"11".repeat(32)}`);
+	const owner = privateKeyToAccount(`0x${"33".repeat(32)}`);
+
+	it("throws when both ownerSigner and sudoValidator are passed", async () => {
+		await expect(
+			issueSessionKey({
+				publicClient: pc,
+				ownerSigner: owner,
+				sudoValidator: {},
+				sessionKeySigner: sk,
+				policies: [toSudoPolicy({})],
+				// The airtight AgentOwner union forbids passing both arms at the type
+				// level, which is exactly the illegal input the runtime guard must
+				// reject — so we deliberately bypass the union (one cast) to reach it.
+				// biome-ignore lint/suspicious/noExplicitAny: deliberate union violation to exercise the runtime guard.
+			} as any),
+		).rejects.toThrow(/exactly one/);
 	});
 });
