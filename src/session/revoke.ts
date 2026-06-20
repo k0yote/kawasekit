@@ -23,12 +23,24 @@
  */
 
 import type { Policy } from "@zerodev/permissions";
-import { toPermissionValidator } from "@zerodev/permissions";
-import { toECDSASigner } from "@zerodev/permissions/signers";
 import { uninstallPlugin } from "@zerodev/sdk";
-import { getEntryPoint, KERNEL_V3_1 } from "@zerodev/sdk/constants";
+import { getEntryPoint, KERNEL_V3_1, VALIDATOR_TYPE } from "@zerodev/sdk/constants";
 import type { EntryPointType, GetKernelVersion } from "@zerodev/sdk/types";
-import { getAddress, type Hash, type LocalAccount } from "viem";
+import {
+	type Address,
+	type Chain,
+	concatHex,
+	encodeFunctionData,
+	getAddress,
+	type Hash,
+	type Hex,
+	type LocalAccount,
+	type PublicClient,
+	pad,
+	parseAbi,
+	type Transport,
+} from "viem";
+import { buildSessionPermissionValidator } from "../account/session-key";
 import type { ConfiguredKernelClient } from "../client/transfer-jpyc";
 import type { KawasekitSessionEnvelope } from "./envelope";
 import { SessionEnvelopeSignerMismatchError } from "./errors";
@@ -176,10 +188,11 @@ export async function revokeSessionKey(
 		);
 	}
 
-	const modularSigner = await toECDSASigner({ signer: sessionKeySigner });
-	const permissionPlugin = await toPermissionValidator(ownerKernelClient.client, {
-		signer: modularSigner,
-		policies: [...policies],
+	// Same shared builder as issuance + buildRevokeSessionKeyCall → identical vId.
+	const permissionPlugin = await buildSessionPermissionValidator({
+		publicClient: ownerKernelClient.client,
+		sessionKeySigner,
+		policies,
 		entryPoint,
 		kernelVersion,
 	});
@@ -200,4 +213,72 @@ export async function revokeSessionKey(
 		transactionHash: receipt.receipt.transactionHash,
 		success: receipt.success,
 	};
+}
+
+const UNINSTALL_VALIDATION_ABI = parseAbi([
+	"function uninstallValidation(bytes21 vId, bytes deinitData, bytes hookDeinitData)",
+]);
+
+/** Parameters for {@link buildRevokeSessionKeyCall}. */
+export interface BuildRevokeSessionKeyCallParams {
+	/** A viem public client (the public API stays `PublicClient`; the shared builder widens to `Client` internally). */
+	readonly publicClient: PublicClient<Transport, Chain>;
+	/** The session-key signer the key was ISSUED with. */
+	readonly sessionKeySigner: LocalAccount;
+	/**
+	 * The policies the key was issued with — identical policies in identical
+	 * ORDER, since the validator identifier hashes the ordered policy array.
+	 * A mismatch reverts at `uninstallValidation`.
+	 */
+	readonly policies: readonly Policy[];
+	/** The deployed agent smart-account address. */
+	readonly smartAccountAddress: Address;
+	readonly entryPoint?: EntryPointType<"0.7">;
+	readonly kernelVersion?: GetKernelVersion<"0.7">;
+}
+
+/**
+ * Build the `uninstallValidation(vId, deinitData, hookDeinitData)` call that
+ * removes a session-key permission validator — a byte-exact reproduction of
+ * `@zerodev/sdk`'s `uninstallPlugin` inner call, which the SDK cannot call
+ * directly because it hardcodes the single-signer `sendUserOperation` path a
+ * weighted/passkey/MPC owner rejects.
+ *
+ * Submit it yourself: single-signer owners via {@link revokeSessionKey};
+ * weighted/passkey/MPC owners via their aggregate flow —
+ * `account.encodeCalls([{ to: smartAccountAddress, value: 0n, data }])` →
+ * `sendUserOperationWithSignatures`.
+ *
+ * @example
+ * ```ts
+ * const data = await buildRevokeSessionKeyCall({
+ *   publicClient, sessionKeySigner, policies, smartAccountAddress,
+ * });
+ * const callData = await weightedAccount.encodeCalls([{ to: smartAccountAddress, value: 0n, data }]);
+ * // …approveUserOperation per signer → sendUserOperationWithSignatures(callData, signatures)
+ * ```
+ */
+export async function buildRevokeSessionKeyCall(
+	params: BuildRevokeSessionKeyCallParams,
+): Promise<Hex> {
+	const entryPoint = params.entryPoint ?? getEntryPoint("0.7");
+	const kernelVersion = params.kernelVersion ?? KERNEL_V3_1;
+	const plugin = await buildSessionPermissionValidator({
+		publicClient: params.publicClient,
+		sessionKeySigner: params.sessionKeySigner,
+		policies: params.policies,
+		entryPoint,
+		kernelVersion,
+	});
+	// vId = VALIDATOR_TYPE.PERMISSION ‖ getIdentifier() right-padded to 20 bytes (bytes21).
+	const vId = concatHex([
+		VALIDATOR_TYPE.PERMISSION,
+		pad(plugin.getIdentifier(), { size: 20, dir: "right" }),
+	]);
+	const deinitData = await plugin.getEnableData(getAddress(params.smartAccountAddress));
+	return encodeFunctionData({
+		abi: UNINSTALL_VALIDATION_ABI,
+		functionName: "uninstallValidation",
+		args: [vId, deinitData, "0x"],
+	});
 }

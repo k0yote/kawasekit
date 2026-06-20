@@ -16,10 +16,16 @@
 
 import type { Policy } from "@zerodev/permissions";
 import { serializePermissionAccount } from "@zerodev/permissions";
+import type { KernelValidator } from "@zerodev/sdk";
+import { createKernelAccount } from "@zerodev/sdk";
 import { getEntryPoint, KERNEL_V3_1 } from "@zerodev/sdk/constants";
 import type { EntryPointType, GetKernelVersion } from "@zerodev/sdk/types";
-import type { Chain, LocalAccount, PublicClient, Transport } from "viem";
-import { createAgentSmartAccount } from "../account/session-key";
+import type { Address, Chain, Hex, LocalAccount, PublicClient, Transport } from "viem";
+import {
+	type AgentOwner,
+	buildSessionPermissionValidator,
+	resolveSudoValidator,
+} from "../account/session-key";
 import { isSupportedChainId, type SupportedChainId } from "../chains";
 import {
 	KAWASEKIT_SESSION_ENVELOPE_VERSION,
@@ -28,22 +34,27 @@ import {
 } from "./envelope";
 
 /** Parameters for {@link issueSessionKey}. */
-export interface IssueSessionKeyParams {
-	/**
-	 * viem `PublicClient` on the chain the smart account will live on. Its
-	 * `chain.id` MUST be a {@link SupportedChainId} and is recorded in the
-	 * envelope so restore-time mismatches fail fast.
-	 */
+export type IssueSessionKeyParams = {
 	readonly publicClient: PublicClient<Transport, Chain>;
-	/** Owner EOA — retains sudo authority. */
-	readonly ownerSigner: LocalAccount;
-	/** Session-key EOA — the day-to-day signer the agent will hold. */
 	readonly sessionKeySigner: LocalAccount;
 	/**
-	 * Policies the session key must satisfy at userOp validation time
-	 * (e.g. {@link createJpycDailyLimitPolicies}).
+	 * Policies the session key must satisfy at userOp validation time (e.g.
+	 * {@link createJpycDailyLimitPolicies}). Supply the SAME policies in the SAME
+	 * order to issue and to revoke (`buildRevokeSessionKeyCall`) — the validator
+	 * identifier hashes the ordered policy array.
 	 */
 	readonly policies: readonly Policy[];
+	/** Bind issuance to an existing deployed account (re-provision after recovery). */
+	readonly address?: Address;
+	/**
+	 * Weighted-enable seam (RFC-0003 U-B1). Called with the SDK-built permission
+	 * validator; returns the enable signature for `serializePermissionAccount`'s
+	 * 3rd arg. Omit for an ECDSA owner (the default single-signer enable). For a
+	 * weighted sudo this is `approvePlugin(plugin)` + `encodeSignatures([approval], true)`,
+	 * computed by the caller with their weighted client. A mismatch surfaces on-chain
+	 * as `EnableNotApproved` at first use.
+	 */
+	readonly approveEnable?: (permissionValidator: KernelValidator) => Promise<Hex>;
 	/** Optional advisory expiry (unix seconds). Recorded in the envelope. */
 	readonly expiresAt?: bigint;
 	/** Optional advisory policy summary for host UI. */
@@ -52,7 +63,7 @@ export interface IssueSessionKeyParams {
 	readonly entryPoint?: EntryPointType<"0.7">;
 	/** Kernel version override. Defaults to {@link KERNEL_V3_1}. */
 	readonly kernelVersion?: GetKernelVersion<"0.7">;
-}
+} & AgentOwner;
 
 /**
  * Issues a fresh session key for an agent smart account.
@@ -112,16 +123,33 @@ export async function issueSessionKey(
 	const entryPoint = params.entryPoint ?? getEntryPoint("0.7");
 	const kernelVersion = params.kernelVersion ?? KERNEL_V3_1;
 
-	const account = await createAgentSmartAccount({
+	const sudoValidator = await resolveSudoValidator({
 		publicClient: params.publicClient,
 		ownerSigner: params.ownerSigner,
+		sudoValidator: params.sudoValidator,
+		entryPoint,
+		kernelVersion,
+	});
+	const permissionValidator = await buildSessionPermissionValidator({
+		publicClient: params.publicClient,
 		sessionKeySigner: params.sessionKeySigner,
 		policies: params.policies,
 		entryPoint,
 		kernelVersion,
 	});
+	const account = await createKernelAccount(params.publicClient, {
+		plugins: { sudo: sudoValidator, regular: permissionValidator },
+		...(params.address !== undefined ? { address: params.address } : {}),
+		entryPoint,
+		kernelVersion,
+	});
 
-	const serialized = await serializePermissionAccount(account);
+	const enableSignature = params.approveEnable
+		? await params.approveEnable(permissionValidator)
+		: undefined;
+	const serialized = enableSignature
+		? await serializePermissionAccount(account, undefined, enableSignature)
+		: await serializePermissionAccount(account);
 
 	const base = {
 		kawasekitVersion: KAWASEKIT_SESSION_ENVELOPE_VERSION,
