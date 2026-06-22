@@ -51,13 +51,10 @@ kawasekit は AI エージェントに「消えていく財布」を提供する
 
 ## ステータス
 
-M4 完了 — `kawasekit@0.1.0-beta.2` を npm に公開済み
-(`pnpm add kawasekit@beta`、SLSA provenance 付き) で mainnet 対応ですが、
-**GA ではありません**。reasoning-step idempotency gap (THREAT_MODEL §6.1) が
-閉じるまで本番利用は小額の per-call value に制約されます。GA (`0.1.0` / `latest`
-タグ) の条件は、この gap + `maxAmountPerSign` ceiling を閉じることと clean な
-beta soak で、レビューは open channel で継続的に行います (第三者の formal audit
-は `1.0` への goal であって GA blocker ではありません)。最新の進捗は
+kawasekit は **GA** です — `kawasekit@0.10.0` を npm に公開済み (`latest` タグ、
+SLSA provenance 付き) で mainnet 対応、Polygon mainnet で決済フロー検証済みです。
+レビューは open channel で継続的に行います (GitHub issues / セキュリティポリシー)。
+第三者の formal audit は `1.0` への goal です。最新の進捗は
 [GitHub プロジェクト](https://github.com/k0yote/kawasekit) を、
 脆弱性の報告は[セキュリティポリシー](/ja/reference/security/) を
 参照してください。
