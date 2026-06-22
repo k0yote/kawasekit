@@ -2,33 +2,35 @@
  * Buy-list → ZeroDev policy bundle for a **disposable, scoped session key**
  * (the Agent Commerce Hub authorization flow).
  *
- * A user's resolved buy-list (its merchants + a per-transfer cap + a total
- * transfer count + a schedule window) is baked into a single-use session key by
- * composing three on-chain policies:
+ * A user's resolved buy-list (its merchants + a per-transfer cap + a schedule
+ * window) is baked into a single-use session key by composing two on-chain
+ * policies:
  * 1. **callPolicy** — `JPYC.transfer(to, value)` with `value ≤ maxPerTransfer`
  *    and `to ∈ merchants` (the allowlist; shared with
  *    {@link createJpycDailyLimitPolicies} via {@link buildJpycTransferCallPolicy}).
- * 2. **rateLimitPolicy** — a **total** cap of `maxTransfers` over the whole
- *    schedule window (the rate window is set to span `[validAfter, validUntil]`,
- *    so `count` does NOT reset within the session — it is a session total, not a
- *    per-day limit).
- * 3. **timestampPolicy** — the session key is only valid within
+ * 2. **timestampPolicy** — the session key is only valid within
  *    `[validAfter, validUntil]`.
  *
  * Cumulative budget ("spend ≤ ¥X total") is NOT a policy field — it is the
  * amount the user funds the account with (funding is the user's responsibility,
  * out of the SDK's scope). These policies bound *who* (allowlist), *how much per
- * transfer* (cap), *how many* (count), and *when* (window).
+ * transfer* (cap), and *when* (window).
+ *
+ * The transfer **count** / sponsored-op bound is intentionally NOT a session-key
+ * policy — total value is bounded by the funded balance, and an op-count / gas
+ * bound (if desired) belongs to the consumer's **sponsor-gas policy**, not this
+ * permission bundle. A prior version included a `rateLimitPolicy` for a
+ * `maxTransfers` count, but it was built on ZeroDev's **scheduled-release** rate-
+ * limit contract (`0xf63d4139…`, which gates op *i* at `startAt + i·interval`)
+ * with `interval` = the whole window, so the 2nd transfer was *not-due until
+ * `validUntil`* and the 3rd+ never — back-to-back multi-merchant payment reverted
+ * `AA22`. It was dropped in `0.10.0`; see `docs/rfc/0004-buylist-drop-scheduled-rate-limit.md`.
  *
  * @packageDocumentation
  */
 
 import type { Policy } from "@zerodev/permissions";
-import {
-	type CallPolicyVersion,
-	toRateLimitPolicy,
-	toTimestampPolicy,
-} from "@zerodev/permissions/policies";
+import { type CallPolicyVersion, toTimestampPolicy } from "@zerodev/permissions/policies";
 import type { Address } from "viem";
 import { buildJpycTransferCallPolicy } from "./jpyc-call-policy";
 
@@ -44,11 +46,6 @@ export interface CreateBuyListPoliciesParams {
 	readonly merchants: readonly Address[];
 	/** Maximum JPYC (raw units) per single transfer. Must be positive. */
 	readonly maxPerTransfer: bigint;
-	/**
-	 * Maximum number of transfers over the WHOLE window — a session total, not a
-	 * per-day limit. Must be a positive integer.
-	 */
-	readonly maxTransfers: number;
 	/** Schedule-window end (unix seconds); the key is invalid after this. Must be a positive integer. */
 	readonly validUntil: number;
 	/**
@@ -75,23 +72,17 @@ export interface CreateBuyListPoliciesParams {
  *   jpycAddress: getJpycAddress(polygonAmoy.id),
  *   merchants: [merchantA, merchantB],          // pay ONLY these (allowlist)
  *   maxPerTransfer: parseUnits("500", JPYC_DECIMALS),
- *   maxTransfers: 3,                             // at most 3 transfers, total
  *   validUntil: Math.floor(Date.now() / 1000) + 3 * 86_400, // valid 3 days
  * });
- * // user funds the account with their budget; the policies bound who/how-much/how-many/when.
+ * // user funds the account with their budget; the policies bound who/how-much/when.
  * ```
  */
 export function createBuyListPolicies(
 	params: CreateBuyListPoliciesParams,
-): readonly [Policy, Policy, Policy] {
+): readonly [Policy, Policy] {
 	if (params.merchants.length === 0) {
 		throw new Error(
 			"createBuyListPolicies: merchants must not be empty — a buy-list must target at least one merchant.",
-		);
-	}
-	if (!Number.isInteger(params.maxTransfers) || params.maxTransfers < 1) {
-		throw new Error(
-			`createBuyListPolicies: maxTransfers must be a positive integer, got ${params.maxTransfers}.`,
 		);
 	}
 	if (!Number.isInteger(params.validUntil) || params.validUntil <= 0) {
@@ -119,17 +110,6 @@ export function createBuyListPolicies(
 		callPolicyVersion: params.callPolicyVersion,
 	});
 
-	// rateLimitPolicy: a TOTAL cap of maxTransfers over the window. Setting the
-	// rate window to span exactly [validAfter, validUntil] (interval = the window
-	// length, startAt = validAfter) keeps the whole session in one rate bucket, so
-	// `count` is a session total — NOT a per-day limit that could reset and let
-	// more than maxTransfers through over a multi-day window.
-	const rateLimitPolicy = toRateLimitPolicy({
-		interval: params.validUntil - validAfter,
-		count: params.maxTransfers,
-		startAt: validAfter,
-	});
-
 	// timestampPolicy: the key is only valid within the schedule window. Omit
 	// validAfter when not given (exactOptionalPropertyTypes: don't pass undefined).
 	const timestampPolicy = toTimestampPolicy(
@@ -138,5 +118,5 @@ export function createBuyListPolicies(
 			: { validAfter: params.validAfter, validUntil: params.validUntil },
 	);
 
-	return [callPolicy, rateLimitPolicy, timestampPolicy] as const;
+	return [callPolicy, timestampPolicy] as const;
 }

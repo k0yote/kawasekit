@@ -13,7 +13,6 @@ function base() {
 		jpycAddress: JPYC,
 		merchants: [MERCHANT_A, MERCHANT_B],
 		maxPerTransfer: parseUnits("500", JPYC_DECIMALS),
-		maxTransfers: 3,
 		validUntil: VALID_UNTIL,
 	} as const;
 }
@@ -28,12 +27,19 @@ function addressWord(addr: Address): string {
 }
 
 describe("createBuyListPolicies", () => {
-	it("returns [callPolicy, rateLimitPolicy, timestampPolicy]", () => {
+	// REGRESSION (0.10.0 / docs/rfc/0004): the bundle is now [callPolicy, timestampPolicy].
+	// The `rateLimitPolicy` (a `maxTransfers` count on ZeroDev's scheduled-release contract
+	// 0xf63d4139…) was DROPPED — it gated op i at startAt + i·interval with interval = the whole
+	// window, so the 2nd transfer was not-due until validUntil and back-to-back multi-merchant
+	// payment reverted AA22. Payment is bounded by allowlist + per-tx cap + window + the funded
+	// balance; an op-count bound belongs to the consumer's sponsor-gas policy.
+	it("returns [callPolicy, timestampPolicy] (NO rate-limit policy)", () => {
 		const policies = createBuyListPolicies(base());
-		expect(policies).toHaveLength(3);
+		expect(policies).toHaveLength(2);
 		expect(policies[0]?.policyParams.type).toBe("call");
-		expect(policies[1]?.policyParams.type).toBe("rate-limit");
-		expect(policies[2]?.policyParams.type).toBe("timestamp");
+		expect(policies[1]?.policyParams.type).toBe("timestamp");
+		// the dropped rate-limit must not reappear in any slot.
+		expect(policies.some((p) => p.policyParams.type === "rate-limit")).toBe(false);
 	});
 
 	it("ENFORCES the merchant allowlist in the callPolicy bytes (exactly those recipients)", () => {
@@ -43,34 +49,30 @@ describe("createBuyListPolicies", () => {
 		expect(data).not.toContain(addressWord(NON_ALLOWLISTED));
 	});
 
-	it("rate limit is a TOTAL over the window: count = maxTransfers, interval spans [validAfter, validUntil]", () => {
-		const policies = createBuyListPolicies({
-			...base(),
-			validAfter: 1_000_000_000,
-			maxTransfers: 3,
-		});
-		const rate = policies[1].policyParams;
-		if (rate.type !== "rate-limit") throw new Error("expected rate-limit");
-		expect(rate.count).toBe(3);
-		// one rate bucket spanning the whole window → count never resets within the session.
-		expect(rate.interval).toBe(VALID_UNTIL - 1_000_000_000);
-		expect(rate.startAt).toBe(1_000_000_000);
-	});
-
-	it("defaults validAfter to 0 (valid immediately); interval then spans [0, validUntil]", () => {
-		const policies = createBuyListPolicies(base());
-		const rate = policies[1].policyParams;
-		if (rate.type !== "rate-limit") throw new Error("expected rate-limit");
-		expect(rate.interval).toBe(VALID_UNTIL);
-		expect(rate.startAt).toBe(0);
+	it("ENFORCES the per-transfer cap (a different cap ⇒ different callPolicy bytes)", () => {
+		const lo = callPolicyData(
+			createBuyListPolicies({ ...base(), maxPerTransfer: parseUnits("1", JPYC_DECIMALS) }),
+		);
+		const hi = callPolicyData(
+			createBuyListPolicies({ ...base(), maxPerTransfer: parseUnits("999", JPYC_DECIMALS) }),
+		);
+		expect(lo).not.toBe(hi);
 	});
 
 	it("timestamp policy bounds the schedule window", () => {
 		const policies = createBuyListPolicies({ ...base(), validAfter: 1_000_000_000 });
-		const ts = policies[2].policyParams;
+		const ts = policies[1].policyParams;
 		if (ts.type !== "timestamp") throw new Error("expected timestamp");
 		expect(ts.validUntil).toBe(VALID_UNTIL);
 		expect(ts.validAfter).toBe(1_000_000_000);
+	});
+
+	it("defaults validAfter to 0 on the timestamp policy when not given (valid immediately)", () => {
+		const policies = createBuyListPolicies(base());
+		const ts = policies[1].policyParams;
+		if (ts.type !== "timestamp") throw new Error("expected timestamp");
+		expect(ts.validUntil).toBe(VALID_UNTIL);
+		expect(ts.validAfter).toBe(0);
 	});
 
 	it("collapses mixed-case duplicate merchants to one (shared normalizer)", () => {
@@ -94,15 +96,6 @@ describe("createBuyListPolicies", () => {
 	it("throws on non-positive maxPerTransfer (shared builder)", () => {
 		expect(() => createBuyListPolicies({ ...base(), maxPerTransfer: 0n })).toThrow(
 			/maxPerTransfer must be positive/,
-		);
-	});
-
-	it("throws on a non-integer / non-positive maxTransfers", () => {
-		expect(() => createBuyListPolicies({ ...base(), maxTransfers: 0 })).toThrow(
-			/maxTransfers must be a positive integer/,
-		);
-		expect(() => createBuyListPolicies({ ...base(), maxTransfers: 2.5 })).toThrow(
-			/maxTransfers must be a positive integer/,
 		);
 	});
 
