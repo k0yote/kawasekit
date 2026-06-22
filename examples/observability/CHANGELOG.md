@@ -1,5 +1,12 @@
 # observability
 
+## 0.0.10
+
+### Patch Changes
+
+- Updated dependencies [19d3221]
+  - kawasekit@0.10.0
+
 ## 0.0.9
 
 ### Patch Changes
