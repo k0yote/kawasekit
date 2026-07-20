@@ -117,6 +117,82 @@
 				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000006"
 			},
 			"digest": "0xd4ad9dd98e01151dd11ca1d0bba6a0431e6ac5a9e701247445e2642ed6bf42c7"
+		},
+		{
+			"name": "transfer-sepolia-11155111-usdc-6dec",
+			"primaryType": "TransferWithAuthorization",
+			"domain": {
+				"name": "USDC",
+				"version": "2",
+				"chainId": 11155111,
+				"verifyingContract": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "250000000",
+				"validAfter": "0",
+				"validBefore": "1893456000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000007"
+			},
+			"digest": "0x8dc75bdc6435754d9651040f79c1e7c11b13df730e3f1b63f75c5002cb6c8ab1"
+		},
+		{
+			"name": "transfer-sepolia-11155111-jpyc-18dec",
+			"primaryType": "TransferWithAuthorization",
+			"domain": {
+				"name": "JPY Coin",
+				"version": "1",
+				"chainId": 11155111,
+				"verifyingContract": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "100000000000000000000000",
+				"validAfter": "0",
+				"validBefore": "1893456000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000008"
+			},
+			"digest": "0x41db94f4999d34cf22e858a6d6537ec59f28ad831660eaf6f022718111785af8"
+		},
+		{
+			"name": "receive-sepolia-11155111-usdc-6dec",
+			"primaryType": "ReceiveWithAuthorization",
+			"domain": {
+				"name": "USDC",
+				"version": "2",
+				"chainId": 11155111,
+				"verifyingContract": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "250000000",
+				"validAfter": "0",
+				"validBefore": "1893456000",
+				"nonce": "0x0000000000000000000000000000000000000000000000000000000000000009"
+			},
+			"digest": "0x27ef208b8df22d357f5508f2e82381cfce4066bb41ee945b491a5d3e1dbe8f1a"
+		},
+		{
+			"name": "receive-ktsla-11155111-18dec",
+			"primaryType": "ReceiveWithAuthorization",
+			"domain": {
+				"name": "kawasekit Tokenized TSLA (demo)",
+				"version": "1",
+				"chainId": 11155111,
+				"verifyingContract": "0x6B0CeE89ac9Ca3BbD0d5e0b2374042cd1ad7090d"
+			},
+			"message": {
+				"from": "0xF5A5E415061470A8b9137959180901aEa72450a4",
+				"to": "0xE8c5f0cA7eAEB2CB4336839EeB907940b1F9f4Ba",
+				"value": "1000000000000000000",
+				"validAfter": "0",
+				"validBefore": "1893456000",
+				"nonce": "0x000000000000000000000000000000000000000000000000000000000000000a"
+			},
+			"digest": "0x96731787c4a9953b5d949d834e2e2188831b97733f4e4b68ae740fa6cc05fe58"
 		}
 	]
 }
