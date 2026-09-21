@@ -284,7 +284,8 @@ async function main(): Promise<void> {
 	const settle = measured[1]?.gasUsed;
 	const transfer = measured[3]?.gasUsed;
 	if (settle !== undefined && transfer !== undefined && transfer > 0n) {
-		const percent = Number((settle * 1000n) / transfer) / 10;
+		// Rounded, not truncated: bigint division floors, which printed 154.3 for a ratio of 1.5437.
+		const percent = Math.round((Number(settle) / Number(transfer)) * 1000) / 10;
 		console.log(
 			`\n  steady state: a Settlement payment costs ${percent}% of a plain transfer's gas`,
 		);

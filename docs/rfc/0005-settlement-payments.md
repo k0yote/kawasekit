@@ -155,9 +155,42 @@ every further chain needs a release of this package.**
 
 ## 7. Gas
 
-> Filled in from `pnpm m7:settlement-pay` on Polygon Amoy — two payments with one session key
-> against two plain transfers under an equally-scoped key, so the comparison is steady state against
-> steady state.
+Measured on Polygon Amoy, 2026-09-22, with `pnpm m7:settlement-pay` (`scripts/15-settlement-pay.ts`):
+two Settlement payments with ONE session key, then two plain transfers under a key scoped the way a
+buy-list key was scoped until 0.10.x. Same account (already deployed), same signer kind (a session
+key behind the permission validator), same sponsor, same amount, same recipient. `actualGasUsed` per
+UserOp:
+
+| UserOp | gas | what it carries |
+|---|---|---|
+| Settlement payment #1 | 1,498,179 | the payment **+ enabling the key's validator** (once per key) |
+| Settlement payment #2 | **591,721** | the payment — steady state |
+| plain transfer #1 | 951,454 | the transfer + enabling the key's validator |
+| plain transfer #2 | **383,302** | the transfer — steady state |
+
+- **Steady state: a Settlement payment costs 154.4 % of a plain transfer — +208,419 gas.** At a
+  30 gwei gas price that is 0.0178 POL against 0.0115 POL, i.e. about 0.0063 POL more per payment.
+- **Once per key: +338,306 gas.** Enabling costs 906,458 gas for the Settlement scope
+  (1,498,179 − 591,721) against 568,152 for the transfer scope (951,454 − 383,302): the scope stores
+  two permissions and five argument rules on chain instead of one and two.
+
+The difference was not broken down further. What the payment does in addition to a transfer is
+known — the policy checks two calls instead of one; `approve` writes an allowance and `pay` clears
+it; the contract hashes the order, writes the settled flag (a new storage slot) and emits an event
+with four topics — but which of these carries how much of the 208 k was not measured.
+
+What the run also showed, read back from the chain rather than from the script's output: in both
+payments the JPYC `Transfer` log goes **from the smart account straight to the merchant** — the funds
+never touch the contract's balance; the amounts are exact (`1000000000000000000`); after the run the
+account's allowance to `Settlement` is `0` and the contract's JPYC balance is `0`; a retry of the
+first order was refused with `AlreadySettled` and `settled(ref)` read `true`; both `Settled` events
+were found by their indexed `ref` alone.
+
+Transactions: `0x36495493…b2f5d3`, `0x6cdcbbee…26367b` (Settlement); `0x15b8d513…3f0738`,
+`0x9a5021e1…7ac208` (transfers).
+
+The spike's earlier figures (1,773,606 for its first payment) are not comparable: that UserOp also
+deployed the account.
 
 ## 8. Status of the contract
 
