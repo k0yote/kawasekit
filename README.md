@@ -20,7 +20,8 @@ kawasekit gives AI agents a way to pay for things in stablecoins — without exp
 - **Agent smart accounts + scoped session keys** — a Kernel v3.1 account where the owner keeps sudo and the agent holds a policy-bounded session key (recipient allowlist + per-transfer cap + schedule window), enforced on-chain.
 - **Validator-agnostic issuance** — issue and revoke a session key under any owner: a plain ECDSA key, or a passkey / weighted-validator sudo (the building block for non-custodial recovery — see the example).
 - **Gasless, sponsored payments** — send JPYC as a sponsored UserOp; the agent holds no native gas token.
-- **Disposable buy-list keys** — bake a buy-list (its merchants + cap + window) into a single-use session key.
+- **Payments that say what they are for** — pay an order through the `Settlement` contract: one UserOp, one `Settled` event, and an order reference the contract computes itself from what was actually paid. One order, one payment; an expired order cannot be paid; the contract holds no funds. *(Unaudited; Polygon Amoy only.)*
+- **Disposable buy-list keys** — bake a buy-list (its merchants + cap + window) into a session key that can pay **only through `Settlement`** — a bare `transfer` is outside its scope.
 - **x402 micropayments** — an HTTP 402 client, Hono server middleware, and a self-facilitator, with default-on reasoning-step idempotency.
 - **EIP-3009 EOA-payer signing** — gasless `transferWithAuthorization` for EOA payers.
 - **Production plumbing** — observability (Prometheus / OTLP) and a `kawasekit` CLI.

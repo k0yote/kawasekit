@@ -1,0 +1,117 @@
+---
+title: Settlement payments
+description: Pay an order through the Settlement contract — one UserOp, one event, and a reference the contract computes itself.
+---
+
+An ERC-20 `transfer` carries a recipient and an amount and nothing else. It cannot say what it pays
+for. A payment through the `Settlement` contract can: the chain is left with a single
+`Settled(ref, payer, merchant, token, amount)` event, and `ref` — the order reference — is computed
+**by the contract** from what was actually paid.
+
+:::caution
+`Settlement` is **unaudited** and is deployed on **Polygon Amoy only**. Test JPYC has no value and
+may not be used as consideration for real goods or services.
+:::
+
+## What the contract guarantees
+
+- **One order, one payment.** A second `pay` of the same reference reverts.
+- **An expired order cannot be paid.**
+- **Only the named payer can settle an order** — the payer is part of the reference.
+- **It holds nothing.** Funds go from the payer to the merchant in the same call. There is no owner
+  and no upgrade path; nobody can designate or change a destination.
+
+## Pay an order
+
+```ts
+import { settleOrder } from "kawasekit";
+
+const { ref, transactionHash } = await settleOrder(kernelClient, {
+  merchant: order.merchant,
+  amount: order.amount,          // raw units; JPYC has 18 decimals
+  validUntil: order.validUntil,  // unix seconds, bigint
+  details: order.details,        // bytes32 — see below
+  expectedRef: order.ref,        // what the order's issuer quoted
+});
+```
+
+`settleOrder` sends **one** UserOp carrying `[JPYC.approve(Settlement, amount), Settlement.pay(…)]`.
+The smart account's batch makes approve-and-pay a single atomic payment, and the allowance is for
+exactly the amount.
+
+Three things are deliberately **not** parameters: the payer (it is the account — the contract hashes
+`msg.sender`), and the `Settlement` address and the token (they come from this package's tables for
+the client's chain). An order's issuer may tell you which contract to pay; `settleOrder` does not
+listen.
+
+### Always pass `expectedRef` when someone else issued the order
+
+The reference is recomputed locally and compared **before anything is sent**. If it differs,
+`settleOrder` throws `SettlementOrderRefMismatchError` — the order you were quoted is not the order
+you are about to pay.
+
+### If a payment fails, do not guess
+
+An order can be paid once. A retry of an already-paid order is refused by the contract, and that
+most likely reaches you as a **thrown** bundler error, not as `success: false`. `ref` is known
+before anything is sent, so ask the chain:
+
+```ts
+import { getSettlementAddress, polygonAmoy, settlementAbi } from "kawasekit";
+
+const paid = await publicClient.readContract({
+  address: getSettlementAddress(polygonAmoy.id),
+  abi: settlementAbi,
+  functionName: "settled",
+  args: [ref],
+});
+```
+
+## The order reference
+
+| hash | who computes it | what it covers |
+|---|---|---|
+| `ref` | the contract (and `hashOrderRef`, identically) | token, payer, merchant, amount, `validUntil`, `details` — under an EIP-712 domain that includes the chain and the deployment |
+| `details` | you, off chain (`hashOrderDetails`) | the order id, its lines, and a 32-byte salt |
+
+```ts
+import { hashOrderDetails, hashOrderRef } from "kawasekit";
+
+const details = hashOrderDetails({
+  orderId: "ord_01J8ZK3V7Q",
+  lines: [{ itemId: "item_espresso", unitPrice: 1200n * 10n ** 18n, quantity: 1 }],
+  salt, // 32 random bytes, fresh per order
+});
+```
+
+The contract never sees what `details` commits to, so nothing readable about a purchase reaches the
+chain. Anyone who holds an order's contents can verify a payment without trusting whoever issued the
+order: recompute `details`, recompute `ref`, look for `Settled(ref, …)`.
+
+## Scope a session key to Settlement
+
+```ts
+import { createBuyListPolicies, getJpycAddress, getSettlementAddress, polygonAmoy } from "kawasekit";
+
+const policies = createBuyListPolicies({
+  jpycAddress: getJpycAddress(polygonAmoy.id),
+  settlementAddress: getSettlementAddress(polygonAmoy.id),
+  merchants: [merchantA, merchantB],
+  maxPerTransfer: cap,
+  validUntil,
+});
+```
+
+The key may call `JPYC.approve(Settlement, ≤ cap)` and `Settlement.pay(JPYC, merchant ∈ merchants,
+≤ cap, …)` — and nothing else. A bare `JPYC.transfer` is refused on chain, so every yen such a key
+moves carries an order reference.
+
+:::note[What the policy does not bound]
+The call policy checks each call of a UserOp, not how many there are: a batch carrying two `pay`
+calls passes it. Total exposure is the account's balance until the key expires, as with any scoped
+key — but if you sponsor gas, holding a UserOp to **one** payment is your sponsorship policy's job.
+`buildSettlementPaymentCalls` gives you the exact two calls to compare against.
+:::
+
+Keys issued by kawasekit ≤ 0.10.x were scoped to `JPYC.transfer`. To revoke one, rebuild its
+policies with the deprecated `createLegacyTransferBuyListPolicies` (removed in 0.12.0).

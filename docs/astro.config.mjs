@@ -53,6 +53,17 @@ export default defineConfig({
 					],
 				},
 				{
+					label: "Guides",
+					translations: { ja: "ガイド" },
+					items: [
+						{
+							label: "Settlement payments",
+							translations: { ja: "Settlement 決済" },
+							slug: "guides/settlement",
+						},
+					],
+				},
+				{
 					label: "Examples",
 					translations: { ja: "サンプル" },
 					items: [
