@@ -14,7 +14,9 @@ import {
  * The B8 cross-language conformance corpus (SDK half). The same
  * `spending-policy.vectors.json` is written to be shared with a re-implementation of the
  * evaluator in another language (it was first built for the `mpc-2p` reference adapter, removed
- * from this package in 0.11.0); every implementation must produce
+ * from this package in 0.11.0). **Do not reword, reformat or re-indent the JSON file — not even
+ * its `note`**: other projects vendor it byte-for-byte and treat this copy as the single source of
+ * truth, which is why the note still names the `mpc-2p` backend. Every implementation must produce
  * identical decisions. Encoding is pinned: decimal-string bigints, EIP-55
  * addresses, `recipientAllowlist` "any" = any recipient / [] = deny-all.
  */

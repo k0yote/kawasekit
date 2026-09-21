@@ -1,7 +1,7 @@
 {
 	"version": "1",
 	"encoding": {
-		"note": "EIP-712 digest-conformance corpus (B8). Pinned encoding: uint256 as decimal string, addresses EIP-55 checksummed, bytes32 nonce and 32-byte digest as 0x-hex. `digest` = keccak256(0x1901 || domainSeparator || hashStruct(message)) over the SDK's EXPORTED transfer/receiveWithAuthorizationTypes. Any implementation in another language MUST reproduce each digest byte-for-byte from the same (domain, types, message) — this enforces that the bytes the policy gates on are the bytes ecrecover verifies, cross-language."
+		"note": "EIP-712 digest-conformance corpus (B8). Pinned encoding: uint256 as decimal string, addresses EIP-55 checksummed, bytes32 nonce and 32-byte digest as 0x-hex. `digest` = keccak256(0x1901 || domainSeparator || hashStruct(message)) over the SDK's EXPORTED transfer/receiveWithAuthorizationTypes. The Rust mpc-2p backend (M6-1 RFC §4.5, H1) MUST reproduce each digest byte-for-byte from the same (domain, types, message) — this enforces that the bytes the policy gates on are the bytes ecrecover verifies, cross-language."
 	},
 	"vectors": [
 		{

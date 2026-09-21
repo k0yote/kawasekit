@@ -13,7 +13,14 @@ import {
  * with implementations in other languages: every one of them must derive each `digest`
  * byte-for-byte from the same `(domain, types, message)`. (It was first built for the `mpc-2p`
  * reference adapter, removed from this package in 0.11.0; what it does for the SDK does not depend
- * on that.) Each golden `digest` is frozen, so any drift
+ * on that.)
+ *
+ * **Do not reword, reformat or re-indent the JSON file — not even its `note`.** Other projects
+ * vendor it BYTE-FOR-BYTE and treat this copy as the single source of truth (they sync it with a
+ * plain `cp` and compare hashes). Its `note` still names the `mpc-2p` backend for that reason: a
+ * tidier sentence is not worth breaking their provenance. Append vectors; change nothing else.
+ *
+ * Each golden `digest` is frozen, so any drift
  * in the EXPORTED `transfer/receiveWithAuthorizationTypes` (field order, type
  * strings, domain shape) breaks this test — making "the bytes the policy gates
  * on == the bytes `ecrecover` verifies" enforced, not true-by-inspection.
