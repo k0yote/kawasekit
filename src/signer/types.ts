@@ -13,8 +13,9 @@
  * a non-bypassable signer ({@link NonBypassableEnforcement}) **fails to compile**
  * when handed an `advisory` one (see `requireNonBypassable`).
  *
- * M6-0 ships the seam + the `local` (advisory) adapter; the `cryptographic`
- * `mpc-2p` adapter is M6-1+ in a separate repo. See
+ * This package ships the seam and ONE adapter: `local`, which is `advisory`. No adapter at a
+ * non-bypassable level ships here — the `mpc-2p` reference adapter was removed in 0.11.0 — so a
+ * flow that requires one must bring its own implementation of {@link PolicyGatedSigner}. See
  * `docs/rfc/policy-gated-signer.md`.
  *
  * @packageDocumentation
@@ -27,8 +28,8 @@ import type { Address, Hex } from "viem";
  *
  * - `advisory` — a single party holds a key that can sign without the gate
  *   (the `local` adapter). The policy is a *request*, not a guarantee.
- * - `cryptographic` — the key is split (e.g. 2-of-2 MPC); no valid signature
- *   exists without a policy-passing co-sign (the `mpc-2p` adapter).
+ * - `cryptographic` — the key is split (e.g. threshold signing); no valid signature exists
+ *   without a policy-passing co-signature. No adapter at this level ships in this package.
  * - `hardware` — enclave-sealed key + policy (the reserved `tee` adapter).
  * - `integrator` — delegated to the integrator's HSM/KMS (the reserved `byo`
  *   adapter); the enforcement strength is integrator-defined.
@@ -79,8 +80,9 @@ export interface PaymentIntent {
  *
  * The evaluator (`evaluateSpendingPolicy`) emits the `revoked` / `expired` /
  * `token_not_allowed` / `recipient_not_allowed` / `amount_exceeds_*` reasons;
- * the adapter additionally emits `from_mismatch` and (for `mpc-2p`)
- * `intent_digest_mismatch` / `unauthenticated` / `nonce_reuse_conflict`. The
+ * the adapter additionally emits `from_mismatch`, and an OUT-OF-PROCESS adapter (one whose policy
+ * is enforced by a separate signer it talks to) may emit `intent_digest_mismatch` /
+ * `unauthenticated` / `nonce_reuse_conflict`. The `local` adapter never emits those three. The
  * consumer handles one `SignResult` regardless of adapter.
  */
 export interface PolicyRejection {
@@ -95,11 +97,11 @@ export interface PolicyRejection {
 		| "unauthenticated"
 		| "from_mismatch"
 		/**
-		 * (`mpc-2p`) The co-signer was presented a **previously-seen EIP-3009
-		 * nonce with different intent fields** — the B7 same-nonce/different-fields
-		 * fund-correctness anomaly. The backend denies + audits it; double-pay
-		 * protection (same nonce, same fields → cached result) is a separate,
-		 * non-rejection path (M5 `deriveAuthorizationNonce` + `authorizationState`).
+		 * (out-of-process adapters) The remote signer was presented a **previously-seen EIP-3009
+		 * nonce with different intent fields** — a same-nonce/different-fields fund-correctness
+		 * anomaly, which it denies and audits. Double-pay protection (same nonce, same fields →
+		 * cached result) is a separate, non-rejection path (`deriveAuthorizationNonce` +
+		 * `authorizationState`).
 		 */
 		| "nonce_reuse_conflict";
 	/** Human-readable reason; never contains the nonce or a signature. */

@@ -1,5 +1,11 @@
 # CTO Review — RFC B5 Key-Share Backup / Recovery (pass 1)
 
+> **WITHDRAWN — 2026-09-22.** The `mpc-2p` co-signer adapter this document reviews a design for was removed from
+> `kawasekit` in **0.11.0**; its last release is **0.10.0**. The document is kept, unmoved, as a
+> record of the design and because other RFCs link to it. Nothing in it describes current
+> behaviour of this package. The `PolicyGatedSigner` seam it plugged into is unchanged — see
+> `policy-gated-signer.md`.
+
 **Artifact:** `docs/rfc/b5-share-backup-recovery.md` (Draft v1)
 **Reviewed:** 2026-06-10, against `kawasekit-mpc-2p` source (main @ post-`1fcd384`) and the
 `kawasekit-dkls23` fork (dev @ `ddaa091`).

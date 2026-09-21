@@ -1,0 +1,116 @@
+---
+title: Settlement 決済
+description: Settlement コントラクトを通して注文を支払う — 1 つの UserOp、1 つのイベント、そしてコントラクト自身が計算する注文参照。
+---
+
+ERC-20 の `transfer` が運べるのは、宛先と金額だけです。「何の代金か」を示す場所がありません。
+`Settlement` コントラクトを通した支払いでは、チェーンに `Settled(ref, payer, merchant, token, amount)`
+というイベントが 1 つ残ります。`ref`(注文参照)は、実際に支払われた内容から**コントラクトが計算**します。
+
+:::caution
+`Settlement` は**未監査**で、デプロイ先は **Polygon Amoy のみ**です。テスト用 JPYC に価値はなく、
+実在の商品や役務の代価として使うことはできません。
+:::
+
+## コントラクトが保証すること
+
+- **1 注文 = 1 決済。** 同じ注文参照での 2 回目の `pay` は revert します。
+- **期限切れの注文は支払えません。**
+- **注文を決済できるのは、注文に書かれた支払者だけです。** 支払者は注文参照に含まれます。
+- **資金を持ちません。** 資金は同じ呼び出しの中で、支払者から店舗へ直接渡ります。オーナーも
+  アップグレードの手段もなく、宛先を指定したり変更したりできる者はいません。
+
+## 注文を支払う
+
+```ts
+import { settleOrder } from "kawasekit";
+
+const { ref, transactionHash } = await settleOrder(kernelClient, {
+  merchant: order.merchant,
+  amount: order.amount,          // 最小単位。JPYC は 18 桁
+  validUntil: order.validUntil,  // unix 秒、bigint
+  details: order.details,        // bytes32(後述)
+  expectedRef: order.ref,        // 注文の発行者が提示した注文参照
+});
+```
+
+`settleOrder` は、`[JPYC.approve(Settlement, amount), Settlement.pay(…)]` を載せた UserOp を **1 つだけ**
+送ります。スマートアカウントの batch によって approve と pay が 1 つの原子的な決済になり、allowance は
+ちょうどその金額です。
+
+意図的に**引数にしていないもの**が 3 つあります。支払者(アカウント自身です。コントラクトは
+`msg.sender` をハッシュに入れます)、そして `Settlement` のアドレスとトークン(クライアントのチェーンに
+対する、このパッケージの表から引きます)。注文の発行者が「このコントラクトに払え」と言ってきても、
+`settleOrder` は聞きません。
+
+### 注文を他者が発行した場合は、必ず `expectedRef` を渡す
+
+注文参照は手元で再計算され、**何も送る前に**比較されます。食い違えば
+`SettlementOrderRefMismatchError` を投げます。提示された注文と、これから払おうとしている注文が
+別物だ、という意味です。
+
+### 支払いが失敗したら、推測しない
+
+注文は 1 回しか支払えません。支払い済みの注文の再試行はコントラクトが拒否し、多くの場合それは
+`success: false` ではなく、bundler の**例外**として届きます。`ref` は送信前に分かっているので、
+チェーンに聞いてください。
+
+```ts
+import { getSettlementAddress, polygonAmoy, settlementAbi } from "kawasekit";
+
+const paid = await publicClient.readContract({
+  address: getSettlementAddress(polygonAmoy.id),
+  abi: settlementAbi,
+  functionName: "settled",
+  args: [ref],
+});
+```
+
+## 注文参照
+
+| ハッシュ | 計算する者 | 対象 |
+|---|---|---|
+| `ref` | コントラクト(`hashOrderRef` も同じ値を返します) | トークン、支払者、店舗、金額、`validUntil`、`details`。EIP-712 のドメインにチェーンとデプロイ先が入ります |
+| `details` | オフチェーンであなたが計算(`hashOrderDetails`) | 注文 ID、明細、32 バイトの salt |
+
+```ts
+import { hashOrderDetails, hashOrderRef } from "kawasekit";
+
+const details = hashOrderDetails({
+  orderId: "ord_01J8ZK3V7Q",
+  lines: [{ itemId: "item_espresso", unitPrice: 1200n * 10n ** 18n, quantity: 1 }],
+  salt, // 注文ごとに新しい 32 バイトの乱数
+});
+```
+
+コントラクトは `details` の中身を見ません。購入の内容がチェーンに読める形で残ることはありません。
+注文の内容を持っている人は誰でも、注文の発行者を信じずに支払いを検証できます。`details` を再計算し、
+`ref` を再計算し、`Settled(ref, …)` を探すだけです。
+
+## セッションキーの範囲を Settlement に絞る
+
+```ts
+import { createBuyListPolicies, getJpycAddress, getSettlementAddress, polygonAmoy } from "kawasekit";
+
+const policies = createBuyListPolicies({
+  jpycAddress: getJpycAddress(polygonAmoy.id),
+  settlementAddress: getSettlementAddress(polygonAmoy.id),
+  merchants: [merchantA, merchantB],
+  maxPerTransfer: cap,
+  validUntil,
+});
+```
+
+この鍵が呼べるのは `JPYC.approve(Settlement, ≤ 上限)` と
+`Settlement.pay(JPYC, merchant ∈ merchants, ≤ 上限, …)` だけです。素の `JPYC.transfer` は
+チェーン上で拒否されるので、この鍵が動かすお金には必ず注文参照が付きます。
+
+:::note[この policy が縛らないもの]
+call policy は UserOp の中の呼び出しを 1 つずつ検査しますが、**呼び出しの数は縛りません。** `pay` を
+2 つ入れた batch は通ります。露出の総額は、ほかの範囲つきの鍵と同じく「鍵の期限まで、アカウントの残高」
+です。ただし、ガスを肩代わりしている場合、UserOp を **1 決済**に制限するのは、あなたの肩代わりの
+ポリシーの仕事です。`buildSettlementPaymentCalls` が、比較すべき 2 つの呼び出しをそのまま返します。
+:::
+
+kawasekit 0.10.x 以前で発行した鍵は、`JPYC.transfer` に範囲を絞ったものです。失効させるには、
+非推奨の `createLegacyTransferBuyListPolicies` で当時の policy を組み直してください(0.12.0 で削除)。

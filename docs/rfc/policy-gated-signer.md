@@ -1,5 +1,12 @@
 # RFC M6-0 — PolicyGatedSigner Seam
 
+> **Note — 2026-09-22 (0.11.0).** This RFC defines the seam AND the contract for an `mpc-2p`
+> reference adapter at `enforcement: "cryptographic"`. The seam, the `local` (advisory) adapter, the
+> type-gate, `EnforcementLevel` and `PolicyRejection` are all current and unchanged. **The `mpc-2p`
+> adapter was removed from `kawasekit` in 0.11.0** — §4.6, §4.8 and §4.9 describe an adapter this
+> package no longer ships, and no adapter at a non-bypassable level ships in its place. A flow that
+> requires one brings its own implementation of `PolicyGatedSigner`. See `docs/THREAT_MODEL.md` 5.2.
+
 | | |
 |---|---|
 | **RFC** | M6-0 |

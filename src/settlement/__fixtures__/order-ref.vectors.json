@@ -1,0 +1,123 @@
+{
+	"detailsCases": [
+		{
+			"name": "single-line",
+			"orderId": "ord_01J8ZK3V7Q",
+			"lines": [
+				{
+					"itemId": "item_espresso",
+					"unitPrice": "1200000000000000000000",
+					"quantity": "1"
+				}
+			],
+			"salt": "0x00000000000000000000000000000000000000000000000000000000000000a1",
+			"details": "0xa24824a48836a9c6e7eab02dbde6d8dee45483f9660cab5b0483b5f8c4a0d578"
+		},
+		{
+			"name": "three-lines",
+			"orderId": "ord_01J8ZK3V7R",
+			"lines": [
+				{
+					"itemId": "item_espresso",
+					"unitPrice": "400000000000000000000",
+					"quantity": "2"
+				},
+				{
+					"itemId": "item_beans_200g",
+					"unitPrice": "1800000000000000000000",
+					"quantity": "1"
+				},
+				{
+					"itemId": "item_filter",
+					"unitPrice": "50000000000000000000",
+					"quantity": "10"
+				}
+			],
+			"salt": "0x00000000000000000000000000000000000000000000000000000000000000a2",
+			"details": "0xad9caf5ce391c6efd329757cf7d1f58ab1030b08a83b933b938475c494ecfb79"
+		},
+		{
+			"name": "no-lines",
+			"orderId": "ord_empty",
+			"lines": [],
+			"salt": "0x00000000000000000000000000000000000000000000000000000000000000a3",
+			"details": "0x241883607f1b7f336c38ca103550f0837ca9e31bd0344e4e76febe0fe76c8028"
+		},
+		{
+			"name": "unicode-ids",
+			"orderId": "注文-東京-001",
+			"lines": [
+				{
+					"itemId": "商品-抹茶ラテ",
+					"unitPrice": "680000000000000000000",
+					"quantity": "1"
+				}
+			],
+			"salt": "0x00000000000000000000000000000000000000000000000000000000000000a4",
+			"details": "0x3a830e2ed2cc2581b30784a6a3368266f03dcb28f341b197d4226179ab199c9c"
+		},
+		{
+			"name": "max-values",
+			"orderId": "ord_max",
+			"lines": [
+				{
+					"itemId": "item_max",
+					"unitPrice": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+					"quantity": "4294967295"
+				}
+			],
+			"salt": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"details": "0xe9c6799e4a45e29df829769b84330ec8f14266bbf7cab9bb73e46cfc35d06064"
+		}
+	],
+	"refCases": [
+		{
+			"name": "amoy-opaque-details",
+			"chainId": "80002",
+			"settlement": "0x5e771e5E771e5E771e5E771e5e771E5E771E5E77",
+			"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+			"payer": "0x1111111111111111111111111111111111111111",
+			"merchant": "0x2222222222222222222222222222222222222222",
+			"amount": "1200000000000000000000",
+			"validUntil": "1800000900",
+			"details": "0x3333333333333333333333333333333333333333333333333333333333333333",
+			"ref": "0xe3a4a8854bbda723c37d1c52865f657c510b0ee1d4ca3d7ff8f407fac29c10cc"
+		},
+		{
+			"name": "amoy-single-line",
+			"chainId": "80002",
+			"settlement": "0x5e771e5E771e5E771e5E771e5e771E5E771E5E77",
+			"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+			"payer": "0x1111111111111111111111111111111111111111",
+			"merchant": "0x2222222222222222222222222222222222222222",
+			"amount": "1200000000000000000000",
+			"validUntil": "1800000900",
+			"details": "0xa24824a48836a9c6e7eab02dbde6d8dee45483f9660cab5b0483b5f8c4a0d578",
+			"ref": "0x5e92cf036dd6dc9b3d616a94fa4d2b2192f4d3fa02061040ef210fe58090337c"
+		},
+		{
+			"name": "polygon-mainnet",
+			"chainId": "137",
+			"settlement": "0x5e771e5E771e5E771e5E771e5e771E5E771E5E77",
+			"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+			"payer": "0x1111111111111111111111111111111111111111",
+			"merchant": "0x2222222222222222222222222222222222222222",
+			"amount": "1200000000000000000000",
+			"validUntil": "1800000900",
+			"details": "0xa24824a48836a9c6e7eab02dbde6d8dee45483f9660cab5b0483b5f8c4a0d578",
+			"ref": "0x07a0e885c34d0b71a878a696e564612fd1f0b83919f0751e38fc5e803feb1bab"
+		},
+		{
+			"name": "max-values",
+			"chainId": "80002",
+			"settlement": "0x5e771e5E771e5E771e5E771e5e771E5E771E5E77",
+			"token": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+			"payer": "0x1111111111111111111111111111111111111111",
+			"merchant": "0x2222222222222222222222222222222222222222",
+			"amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+			"validUntil": "18446744073709551615",
+			"details": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"ref": "0xa50c5237fc06fd4062b1c80e43b164a04d1238b508a2471274a7ed37105aaf70"
+		}
+	]
+}

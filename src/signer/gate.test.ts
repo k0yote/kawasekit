@@ -22,7 +22,7 @@ const local = createLocalPolicyGatedSigner({
 	acknowledgeAdvisory: true,
 });
 
-// M6-0 ships no cryptographic adapter; this typed stub exercises the gate's pass direction.
+// This package ships no non-bypassable adapter; this typed stub exercises the gate's pass direction.
 // cast: fabricate a non-bypassable signer for the positive type-gate assertion
 const cryptographic = {
 	...local,

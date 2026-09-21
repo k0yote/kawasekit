@@ -32,18 +32,30 @@ node -e "const k = require('kawasekit');           console.log('root', Object.ke
 node -e "const k = require('kawasekit/x402');      console.log('x402', Object.keys(k).length)"
 node -e "const k = require('kawasekit/x402/hono'); console.log('hono', Object.keys(k).length)"
 node -e "const k = require('kawasekit/session');   console.log('session', Object.keys(k).length)"
+node -e "const k = require('kawasekit/signer');    console.log('signer', Object.keys(k).length)"
+node -e "const k = require('kawasekit/policy');    console.log('policy', Object.keys(k).length)"
 node -e "const k = require('kawasekit/observability'); console.log('obs', Object.keys(k).length)"
+node -e "const k = require('kawasekit/idempotency');   console.log('idem', Object.keys(k).length)"
 ```
 
-Expected baseline counts (at 0.1.0-alpha.0):
+Expected baseline counts (runtime exports only — `Object.keys` does not see types; measured from
+the build at 0.11.0):
 
 | Subpath                                | Exports |
 |----------------------------------------|---------|
-| `kawasekit`                            | ~62     |
-| `kawasekit/x402`                       | ~25     |
-| `kawasekit/x402/hono`                  | ~3      |
-| `kawasekit/session`                    | ~11     |
-| `kawasekit/observability`              | ~5      |
+| `kawasekit`                            | 116     |
+| `kawasekit/x402`                       | 30      |
+| `kawasekit/x402/hono`                  | 2       |
+| `kawasekit/session`                    | 11      |
+| `kawasekit/signer`                     | 4       |
+| `kawasekit/policy`                     | 6       |
+| `kawasekit/observability`              | 2       |
+| `kawasekit/idempotency`                | 10      |
+
+For orientation: 0.10.0 measured 105 at the root and 10 at `kawasekit/signer`. 0.11.0 removes the
+`mpc-2p` adapter (−5 runtime exports at the root, −6 at `kawasekit/signer`) and adds the Settlement
+module and the legacy buy-list builder at the root. A count that moves without a changeset that
+explains it is the thing to look into.
 
 If any of these emit `Cannot find module 'kawasekit/.../dist/...'`, the
 publish is broken and the operator should `npm unpublish` (within 72 h

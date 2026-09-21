@@ -78,8 +78,8 @@ export interface SignedAuthorization<TMessage> {
  *
  * This is the **single source of truth** for the typed-data structure (field
  * names, types, and order) that EIP-3009 hashes and `ecrecover` verifies.
- * Exported so out-of-process / cross-language consumers — notably the `mpc-2p`
- * co-signer backend (RFC M6-1 §4.5, H1) — bind to this exact definition (or
+ * Exported so out-of-process / cross-language consumers — a remote signer that re-derives the
+ * digest before it signs, for instance — bind to this exact definition (or
  * codegen from it) instead of re-declaring it, and so the digest the policy
  * gates on is provably the digest the chain verifies (see the digest-conformance
  * corpus in `__fixtures__/eip3009-digest.vectors.json`).
