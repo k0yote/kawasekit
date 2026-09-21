@@ -2,10 +2,13 @@
  * Shared builder for the JPYC `transfer` callPolicy — the on-chain rule that
  * locks a ZeroDev session key to `JPYC.transfer(to, value)` with
  * `value ≤ maxPerTransfer` and an optional recipient allowlist (condition
- * `ONE_OF`). Used by BOTH {@link createJpycDailyLimitPolicies} (`./daily-limit`)
- * and {@link createBuyListPolicies} (`./buy-list`) so the recipient/amount
- * constraint is built identically; each caller composes its own rate-limit /
+ * `ONE_OF`). Used by {@link createJpycDailyLimitPolicies} (`./daily-limit`) and by the
+ * deprecated {@link createLegacyTransferBuyListPolicies} (`./legacy-transfer-buy-list`), so the
+ * recipient/amount constraint is built identically; each caller composes its own rate-limit /
  * timestamp policy on top.
+ *
+ * Since 0.11.0 {@link createBuyListPolicies} does NOT use this: a buy-list key pays through the
+ * `Settlement` contract (`./settlement-call-policy`), and a bare `transfer` is outside its scope.
  *
  * @packageDocumentation
  */

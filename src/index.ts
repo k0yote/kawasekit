@@ -52,6 +52,12 @@ export {
 	ONE_DAY_SECONDS,
 } from "./policy/daily-limit";
 export {
+	/** @deprecated Exists only to revoke keys issued by kawasekit ≤ 0.10.x. Removed in 0.12.0. */
+	type CreateLegacyTransferBuyListPoliciesParams,
+	/** @deprecated Exists only to revoke keys issued by kawasekit ≤ 0.10.x. Removed in 0.12.0. */
+	createLegacyTransferBuyListPolicies,
+} from "./policy/legacy-transfer-buy-list";
+export {
 	type CreateSpendingPolicyParams,
 	createSpendingPolicy,
 	evaluateSpendingPolicy,
@@ -292,3 +298,37 @@ export {
 	parseIdempotencyRecord,
 	serializeIdempotencyRecord,
 } from "./idempotency";
+
+// ---------------------------------------------------------------------------
+// Settlement payments (0.11.0)
+// ---------------------------------------------------------------------------
+export { settlementAbi } from "./settlement/abi";
+export {
+	getSettlementAddress,
+	SETTLEMENT_V1_ADDRESS,
+	type SettlementDeployment,
+	SettlementNotAvailableError,
+	settlementDeployments,
+} from "./settlement/deployments";
+export {
+	type HashOrderDetailsParams,
+	type HashOrderRefParams,
+	hashOrderDetails,
+	hashOrderRef,
+	SETTLEMENT_EIP712_DOMAIN_NAME,
+	SETTLEMENT_EIP712_DOMAIN_VERSION,
+	type SettlementOrder,
+	type SettlementOrderLine,
+	settlementOrderDetailsTypes,
+	settlementOrderTypes,
+} from "./settlement/order-hash";
+export {
+	type BuildSettlementPaymentCallsParams,
+	buildSettlementPaymentCalls,
+	type SettlementCall,
+	SettlementOrderRefMismatchError,
+	SettleOrderInputError,
+	type SettleOrderParams,
+	type SettleOrderResult,
+	settleOrder,
+} from "./settlement/settle-order";
