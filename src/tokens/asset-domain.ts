@@ -141,8 +141,8 @@ export function resolveAssetParam(asset: X402AssetParam): ResolvedAsset {
  *
  * The single place that maps `(pinned asset, chainId) -> domain`, so every
  * signing path (`src/x402/client.ts`, `src/signer/`) builds the domain
- * identically — the domain half of the EIP-712 single-source-of-truth the
- * `mpc-2p` backend relies on (RFC M6-1 §4.5, H1). `name` / `version` /
+ * identically — the domain half of the EIP-712 single source of truth that any
+ * out-of-process signer re-deriving the digest relies on. `name` / `version` /
  * `verifyingContract` come from the pinned asset; only `chainId` is per-request.
  */
 export function resolvedAssetToEip3009Domain(asset: ResolvedAsset, chainId: number): Eip3009Domain {

@@ -5,7 +5,7 @@
 		"address": "eip55-checksummed",
 		"recipientAllowlist": "\"any\" = any recipient; [] = deny-all; else allowlist",
 		"expected": "only { ok } or { ok:false, reason } is conformance-bound; detail strings are not",
-		"note": "Shared corpus for the SDK (TS) evaluator and the mpc-2p backend (Go) port. Evaluator-level reasons only — adapter-level reasons (from_mismatch, intent_digest_mismatch, unauthenticated) are out of scope."
+		"note": "Conformance corpus for the SDK (TS) evaluator; any re-implementation of the evaluator in another language must produce identical decisions. Evaluator-level reasons only — adapter-level reasons (from_mismatch, intent_digest_mismatch, unauthenticated) are out of scope."
 	},
 	"vectors": [
 		{

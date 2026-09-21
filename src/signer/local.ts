@@ -35,8 +35,8 @@ export interface CreateLocalPolicyGatedSignerParams {
 	 * Required literal acknowledgement that this signer is **advisory** (a
 	 * key-holder can bypass its policy). Omitting it is a compile error (TS) and
 	 * a construction-time throw (JS) — so constructing an advisory signer is a
-	 * conscious, greppable act. For bounded/regulated flows use a cryptographic
-	 * adapter instead.
+	 * conscious, greppable act. A bounded/regulated flow needs a non-bypassable
+	 * adapter instead; none ships in this package.
 	 */
 	readonly acknowledgeAdvisory: true;
 	/**
@@ -68,7 +68,7 @@ export function createLocalPolicyGatedSigner(
 	if (params.acknowledgeAdvisory !== true) {
 		throw new PolicyGatedSignerConfigError(
 			"acknowledgeAdvisory",
-			"a local signer is advisory (a key-holder can bypass its policy); pass `acknowledgeAdvisory: true` to construct one consciously, or use a cryptographic adapter for bounded/regulated flows",
+			"a local signer is advisory (a key-holder can bypass its policy); pass `acknowledgeAdvisory: true` to construct one consciously. A bounded/regulated flow needs a non-bypassable adapter, and none ships in this package",
 		);
 	}
 

@@ -4,14 +4,14 @@
  * `maxPerSign` + cumulative cap, recipient allowlist, `revoked`) and one pure,
  * deny-closed evaluator {@link evaluateSpendingPolicy}.
  *
- * The same specification is enforced SDK-side (the `local` adapter) and, for the
- * `mpc-2p` adapter, re-implemented backend-side in Rust (the `kawasekit-mpc-2p`
- * co-signer); a shared conformance corpus
- * (`__fixtures__/spending-policy.vectors.json`) keeps the two in lockstep.
+ * The specification is enforced SDK-side by the `local` adapter. It is written so that an
+ * out-of-process signer can re-implement it in another language: a conformance corpus
+ * (`__fixtures__/spending-policy.vectors.json`) pins every decision, and any second implementation
+ * must reproduce it.
  * The evaluator is **check-only** — it reads `SpendState` and never mutates it;
  * the cumulative-cap *commit* (folding a successful spend back in via
- * {@link mergeSpendState}) is the adapter's job, and atomic+authoritative
- * commit is a property of the `cryptographic` adapter only.
+ * {@link mergeSpendState}) is the adapter's job. An atomic, authoritative commit needs a signer
+ * that is not the key-holder's own process — the `local` adapter cannot offer it.
  *
  * This is the **x402-EOA** policy path. The smart-account / ZeroDev session-key
  * path is `createJpycDailyLimitPolicies` (`./daily-limit`) — a sibling, not a
@@ -62,8 +62,8 @@ export interface SpendingPolicy {
 /**
  * Cross-call cumulative spend, per token. Injected into the evaluator (never a
  * module global). For the `local` adapter this is a single-process, caller-managed
- * **read-only view**; the authoritative ledger lives in the `cryptographic`
- * adapter's backend.
+ * **read-only view**. Only an out-of-process, non-bypassable signer could hold an authoritative
+ * ledger; none ships in this package.
  */
 export interface SpendState {
 	readonly spentPerToken: readonly { readonly token: Address; readonly spent: bigint }[];

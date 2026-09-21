@@ -12,8 +12,9 @@ import {
 
 /**
  * The B8 cross-language conformance corpus (SDK half). The same
- * `spending-policy.vectors.json` is consumed by the `mpc-2p` Rust backend port
- * (M6-2; RFC M6-1 L1 — Rust, co-located with the DKLs crate); both must produce
+ * `spending-policy.vectors.json` is written to be shared with a re-implementation of the
+ * evaluator in another language (it was first built for the `mpc-2p` reference adapter, removed
+ * from this package in 0.11.0); every implementation must produce
  * identical decisions. Encoding is pinned: decimal-string bigints, EIP-55
  * addresses, `recipientAllowlist` "any" = any recipient / [] = deny-all.
  */

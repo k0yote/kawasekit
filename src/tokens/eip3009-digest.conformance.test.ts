@@ -9,10 +9,11 @@ import {
 } from "./eip3009";
 
 /**
- * The B8 EIP-712 digest-conformance corpus (SDK half). The same
- * `eip3009-digest.vectors.json` is consumed by the `mpc-2p` Rust backend
- * (M6-1 RFC §4.5, H1): both must derive each `digest` byte-for-byte from the
- * same `(domain, types, message)`. Each golden `digest` is frozen, so any drift
+ * The EIP-712 digest-conformance corpus. `eip3009-digest.vectors.json` is written to be shared
+ * with implementations in other languages: every one of them must derive each `digest`
+ * byte-for-byte from the same `(domain, types, message)`. (It was first built for the `mpc-2p`
+ * reference adapter, removed from this package in 0.11.0; what it does for the SDK does not depend
+ * on that.) Each golden `digest` is frozen, so any drift
  * in the EXPORTED `transfer/receiveWithAuthorizationTypes` (field order, type
  * strings, domain shape) breaks this test — making "the bytes the policy gates
  * on == the bytes `ecrecover` verifies" enforced, not true-by-inspection.

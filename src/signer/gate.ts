@@ -15,14 +15,16 @@ import type { NonBypassableEnforcement, PolicyGatedSigner } from "./types";
  * assignable to `PolicyGatedSigner<NonBypassableEnforcement>` (covariant `E`).
  *
  * Use it at the boundary of a bounded/regulated flow so wiring an advisory
- * signer into it fails the build, not silently at runtime.
+ * signer into it fails the build, not silently at runtime. This package ships no
+ * adapter that passes the gate — `local` is advisory — so the signer handed to it
+ * is one you implement.
  *
  * @example
  * ```ts
  * function payBounded(signer: PolicyGatedSigner<NonBypassableEnforcement>) { ... }
  *
- * requireNonBypassable(mpc2pSigner); // ✓ ok — cryptographic
- * // requireNonBypassable(localSigner); // ✗ compile error — advisory
+ * requireNonBypassable(thresholdSigner); // ✓ ok — your own `cryptographic` adapter
+ * // requireNonBypassable(localSigner);   // ✗ compile error — advisory
  * ```
  */
 export function requireNonBypassable<E extends NonBypassableEnforcement>(
