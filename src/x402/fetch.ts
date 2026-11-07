@@ -148,6 +148,20 @@ function defaultSelectRequirements(
 // Public API
 // ---------------------------------------------------------------------------
 
+/** The pending transaction a 402's `PAYMENT-RESPONSE` names, if it says `settlement_pending`. */
+function readPendingSettlement(response: Response): Hex | undefined {
+	const header = response.headers.get(X402_HEADER_PAYMENT_RESPONSE);
+	if (header === null || header === "") return undefined;
+	try {
+		const settlement = decodePaymentResponseHeader(header);
+		return settlement.errorReason === "settlement_pending" && settlement.transaction !== ""
+			? (settlement.transaction as Hex) // the settle response's `transaction` is a tx hash
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * Returns an x402-aware `fetch` that pays for `402` responses on the caller's
  * behalf using the provided signer.
@@ -188,7 +202,11 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 		const requestUrl =
 			typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 
-		const emitFailure = (reason: string, httpStatus: number | undefined): void => {
+		const emitFailure = (
+			reason: string,
+			httpStatus: number | undefined,
+			transaction?: Hex,
+		): void => {
 			const event: ClientPaymentEvent = {
 				kind: "client_payment",
 				result: "failure",
@@ -197,6 +215,7 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 				requestUrl,
 				reason,
 				...(httpStatus !== undefined ? { httpStatus } : {}),
+				...(transaction !== undefined ? { transaction } : {}),
 			};
 			invokeHookSafely(hooks?.onClientPayment, event);
 		};
@@ -266,11 +285,17 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 				...(transaction !== undefined ? { transaction } : {}),
 			};
 			invokeHookSafely(hooks?.onClientPayment, successEvent);
+		} else if (retryResponse.status === 402) {
+			// x402 v2 §9: `settlement_pending` means broadcast, not yet confirmed — the payment may
+			// still land. Report the transaction so the caller reconciles on chain; never pay again.
+			const pending = readPendingSettlement(retryResponse);
+			if (pending !== undefined) {
+				emitFailure("settlement_pending", 402, pending);
+			} else {
+				emitFailure("settle_rejected", 402);
+			}
 		} else {
-			emitFailure(
-				retryResponse.status === 402 ? "settle_rejected" : "http_error",
-				retryResponse.status,
-			);
+			emitFailure("http_error", retryResponse.status);
 		}
 
 		return retryResponse;

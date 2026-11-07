@@ -2,11 +2,13 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { privateKeyToAccount } from "viem/accounts";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { readBody, withHttpListener } from "../../test/helpers/http-listener";
+import type { ClientPaymentEvent } from "../observability/hooks";
 import { JPYC_V2_ADDRESS } from "../tokens/jpyc";
 import { createX402PaymentSigner } from "./client";
 import {
 	decodePaymentSignatureHeader,
 	encodePaymentRequiredHeader,
+	encodePaymentResponseHeader,
 	X402_HEADER_PAYMENT_REQUIRED,
 	X402_HEADER_PAYMENT_RESPONSE,
 } from "./encoding";
@@ -15,6 +17,7 @@ import type {
 	X402PaymentPayload,
 	X402PaymentRequiredResponse,
 	X402PaymentRequirements,
+	X402SettleResponse,
 } from "./types";
 
 const ACCOUNT_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
@@ -425,5 +428,92 @@ describe("wrapFetch — custom fetch", () => {
 			// One call for the initial 402, one for the retry.
 			expect(customFetch).toHaveBeenCalledTimes(2);
 		});
+	});
+});
+
+// #53: a paid retry answered 402 with PAYMENT-RESPONSE `settlement_pending` (x402 v2 §9) means the
+// payment was broadcast and may still land. wrapFetch makes ONE paid attempt — it never signs a
+// second authorization — and reports the pending transaction so the caller reconciles on chain.
+describe("wrapFetch — settlement_pending (#53)", () => {
+	function settleFailureHandler(settlement: X402SettleResponse) {
+		return async (req: IncomingMessage, res: ServerResponse) => {
+			await readBody(req);
+			const sig = req.headers["payment-signature"];
+			res.statusCode = 402;
+			res.setHeader("content-type", "application/json");
+			res.setHeader(X402_HEADER_PAYMENT_REQUIRED, encodePaymentRequiredHeader(build402()));
+			if (typeof sig === "string" && sig !== "") {
+				res.setHeader(X402_HEADER_PAYMENT_RESPONSE, encodePaymentResponseHeader(settlement));
+			}
+			res.end(JSON.stringify(build402()));
+		};
+	}
+
+	it("reports settlement_pending with the transaction, signs once, and returns the 402", async () => {
+		const pending: X402SettleResponse = {
+			success: false,
+			errorReason: "settlement_pending",
+			transaction: `0x${"77".repeat(32)}`,
+			network: REQS.network,
+		};
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account,
+			asset: { kind: "known", id: "jpyc-v2" },
+		});
+		const sign = vi.spyOn(signer, "sign");
+		const events: ClientPaymentEvent[] = [];
+		await withHttpListener(settleFailureHandler(pending), async (baseUrl) => {
+			const fetch402 = wrapFetch({
+				signer,
+				onPayment: () => true,
+				hooks: {
+					onClientPayment: (e) => {
+						events.push(e);
+					},
+				},
+			});
+			const res = await fetch402(`${baseUrl}/weather`);
+			expect(res.status).toBe(402);
+		});
+		expect(sign).toHaveBeenCalledTimes(1);
+		expect(events).toHaveLength(1);
+		expect(events[0]).toMatchObject({
+			result: "failure",
+			reason: "settlement_pending",
+			httpStatus: 402,
+			transaction: pending.transaction,
+		});
+	});
+
+	it("any other settle failure stays settle_rejected, with no transaction", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account,
+			asset: { kind: "known", id: "jpyc-v2" },
+		});
+		const events: ClientPaymentEvent[] = [];
+		await withHttpListener(
+			settleFailureHandler({
+				success: false,
+				errorReason: "invalid_transaction_state",
+				transaction: "",
+				network: REQS.network,
+			}),
+			async (baseUrl) => {
+				const fetch402 = wrapFetch({
+					signer,
+					onPayment: () => true,
+					hooks: {
+						onClientPayment: (e) => {
+							events.push(e);
+						},
+					},
+				});
+				expect((await fetch402(`${baseUrl}/weather`)).status).toBe(402);
+			},
+		);
+		expect(events[0]).toMatchObject({ result: "failure", reason: "settle_rejected" });
+		expect(events[0]).not.toHaveProperty("transaction");
 	});
 });
