@@ -73,7 +73,7 @@ the first scrape.
 | payment_required vs payment_accepted | 402 rate vs 200-after-payment rate. The gap is paywall hits that never settled — usually clients abandoning. |
 | verify failure reason breakdown | Last hour bar chart by x402 spec invalid-reason code. `insufficient_funds` dominating = payer funding issue. |
 | client_payment rate (by result) | `wrapFetch` paywall round-trip success rate. |
-| client_payment failure reasons | Last hour bar chart by failure label (`onPayment_declined`, `settle_rejected`, `http_error`, `no_acceptable_requirement`). |
+| client_payment failure reasons | Last hour bar chart by failure label (`onPayment_declined`, `settle_rejected`, `settlement_pending`, `http_error`, `no_acceptable_requirement`). |
 
 ## Alert rules
 

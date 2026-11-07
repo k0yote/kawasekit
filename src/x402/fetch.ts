@@ -15,6 +15,15 @@
  * If the second attempt still fails the wrapper returns that response so the
  * caller can decide how to recover.
  *
+ * **A pending payment is not a failed one.** When the second attempt is
+ * answered 402 with a `PAYMENT-RESPONSE` saying `settlement_pending` (x402 v2
+ * §9), the transaction was broadcast and may still land; `onClientPayment`
+ * reports reason `settlement_pending` with its `transaction`. Do not repeat the
+ * purchase — a new attempt signs a new authorization and can pay twice —
+ * reconcile the transaction on chain instead. Where a server may answer
+ * pending, set `idempotencyKeyFor`: a repeated purchase then derives the same
+ * nonce, which the chain spends once.
+ *
  * Streaming request bodies are not retry-safe; the wrapper passes `init.body`
  * through verbatim, so callers who need retry must pass a buffered body
  * (string / Uint8Array / ArrayBuffer / FormData).
