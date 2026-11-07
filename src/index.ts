@@ -146,6 +146,7 @@ export {
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./x402/encoding";
 export {
+	X402FacilitatorTimeoutError,
 	X402InvalidConfigError,
 	X402InvalidPayloadError,
 	X402PolicyRejectedError,
@@ -161,6 +162,7 @@ export {
 	createSelfFacilitator,
 	deriveReceiptTimeoutMs,
 	X402_FACILITATOR_ERROR_CODES,
+	type X402FacilitatorRetryOptions,
 } from "./x402/facilitator";
 export { type WrapFetchParams, wrapFetch, type X402Fetch } from "./x402/fetch";
 export {

@@ -85,6 +85,47 @@ export class X402InvalidConfigError extends Error {
 }
 
 /**
+ * Thrown by {@link createHttpFacilitator} when a facilitator request did not answer within
+ * `timeoutMs` (on every attempt the retry budget allowed).
+ *
+ * For `endpoint: "settle"` the outcome is **unknown**: the facilitator may already have broadcast
+ * the transaction, and it may still settle. Do not treat this as a failed payment, and never ask
+ * the payer for a new authorization because of it — reconcile on chain first (the authorization's
+ * nonce is spent once it settles).
+ *
+ * @example
+ * ```ts
+ * import { X402FacilitatorTimeoutError } from "kawasekit";
+ *
+ * try {
+ *   await facilitator.settle(request);
+ * } catch (error) {
+ *   if (error instanceof X402FacilitatorTimeoutError && error.endpoint === "settle") {
+ *     // outcome unknown — check the authorization's nonce on chain before anything else
+ *   }
+ * }
+ * ```
+ */
+export class X402FacilitatorTimeoutError extends Error {
+	/** The facilitator endpoint that timed out. */
+	readonly endpoint: "verify" | "settle";
+	/** The per-attempt timeout, in milliseconds. */
+	readonly timeoutMs: number;
+
+	constructor(endpoint: "verify" | "settle", timeoutMs: number, options?: { cause?: unknown }) {
+		super(
+			endpoint === "settle"
+				? `Facilitator settle did not answer within ${timeoutMs} ms — the outcome is unknown: the payment may still settle. Reconcile on chain; do not ask for a new authorization.`
+				: `Facilitator verify did not answer within ${timeoutMs} ms`,
+			options,
+		);
+		this.name = "X402FacilitatorTimeoutError";
+		this.endpoint = endpoint;
+		this.timeoutMs = timeoutMs;
+	}
+}
+
+/**
  * Thrown by {@link createX402PaymentSigner} (the `signer` variant) when the bound
  * `PolicyGatedSigner` refuses to sign — i.e. its `sign()` returned
  * `{ ok: false }`. Carries the typed {@link PolicyRejection} so callers can

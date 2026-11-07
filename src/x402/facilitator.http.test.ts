@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readBody, withHttpListener } from "../../test/helpers/http-listener";
 import { JPYC_V2_ADDRESS } from "../tokens/jpyc";
+import { X402FacilitatorTimeoutError } from "./errors";
 import { createCoinbaseFacilitator, createHttpFacilitator } from "./facilitator";
 import type {
 	X402PaymentPayload,
@@ -220,6 +221,207 @@ describe("createHttpFacilitator — settle", () => {
 				expect(result.errorReason).toBe("insufficient_funds");
 			},
 		);
+	});
+});
+
+const SETTLED: X402SettleResponse = {
+	success: true,
+	transaction: `0x${"12".repeat(32)}`,
+	network: "eip155:80002",
+	payer: "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+};
+
+const SETTLE_REQ = { x402Version: 2, paymentPayload: PAYLOAD, paymentRequirements: REQS } as const;
+
+/** Answer the first `failures` requests with `fail`, then `ok`; record every body received. */
+function flaky(
+	failures: number,
+	fail: (res: import("node:http").ServerResponse) => void,
+	ok: unknown,
+): { bodies: string[]; handler: Parameters<typeof withHttpListener>[0] } {
+	const bodies: string[] = [];
+	return {
+		bodies,
+		handler: async (req, res) => {
+			bodies.push(await readBody(req));
+			if (bodies.length <= failures) {
+				fail(res);
+				return;
+			}
+			res.setHeader("content-type", "application/json");
+			res.end(JSON.stringify(ok));
+		},
+	};
+}
+
+const unavailable =
+	(retryAfter?: string) =>
+	(res: import("node:http").ServerResponse): void => {
+		res.statusCode = 503;
+		if (retryAfter !== undefined) res.setHeader("retry-after", retryAfter);
+		res.setHeader("content-type", "application/json");
+		res.end(JSON.stringify({ error: "unavailable" }));
+	};
+
+// #53: a facilitator that could not take the request (503, or a gateway in front of it answering
+// 502/504, or the connection dropping) is retried with the SAME body. Resending the same
+// authorization cannot charge twice — EIP-3009 consumes its nonce once on chain.
+describe("createHttpFacilitator — retry on 502/503/504 and network errors (#53)", () => {
+	it("retries /settle after a 503 with the identical body, and returns the eventual answer", async () => {
+		const f = flaky(2, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } });
+			const result = await facilitator.settle(SETTLE_REQ);
+			expect(result).toEqual(SETTLED);
+		});
+		expect(f.bodies).toHaveLength(3);
+		expect(new Set(f.bodies).size).toBe(1);
+	});
+
+	it("retries /verify too, and on 502 and 504", async () => {
+		for (const status of [502, 504]) {
+			const f = flaky(
+				1,
+				(res) => {
+					res.statusCode = status;
+					res.end("");
+				},
+				{ isValid: true } satisfies X402VerifyResponse,
+			);
+			await withHttpListener(f.handler, async (baseUrl) => {
+				const facilitator = createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } });
+				expect((await facilitator.verify(SETTLE_REQ)).isValid).toBe(true);
+			});
+			expect(f.bodies).toHaveLength(2);
+		}
+	});
+
+	it("is on by default", async () => {
+		const f = flaky(1, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			expect((await createHttpFacilitator({ baseUrl }).settle(SETTLE_REQ)).success).toBe(true);
+		});
+		expect(f.bodies).toHaveLength(2);
+	});
+
+	it("waits Retry-After before the next attempt", async () => {
+		const f = flaky(1, unavailable("1"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const started = Date.now();
+			await createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } }).settle(SETTLE_REQ);
+			expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+		});
+	});
+
+	it("stops at maxAttempts and throws the last failure", async () => {
+		const f = flaky(10, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({
+				baseUrl,
+				retry: { maxAttempts: 2, initialDelayMs: 1 },
+			});
+			await expect(facilitator.settle(SETTLE_REQ)).rejects.toThrow(/503/);
+		});
+		expect(f.bodies).toHaveLength(2);
+	});
+
+	it("does not start an attempt whose wait would overrun the budget", async () => {
+		const f = flaky(10, unavailable("5"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({ baseUrl, retry: { budgetMs: 1_000 } });
+			const started = Date.now();
+			await expect(facilitator.settle(SETTLE_REQ)).rejects.toThrow(/503/);
+			expect(Date.now() - started).toBeLessThan(1_000);
+		});
+		expect(f.bodies).toHaveLength(1);
+	});
+
+	it("does not retry other statuses (400, 500)", async () => {
+		for (const status of [400, 500]) {
+			const f = flaky(
+				10,
+				(res) => {
+					res.statusCode = status;
+					res.setHeader("content-type", "application/json");
+					res.end(JSON.stringify({ error: "nope" }));
+				},
+				SETTLED,
+			);
+			await withHttpListener(f.handler, async (baseUrl) => {
+				await expect(
+					createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } }).settle(SETTLE_REQ),
+				).rejects.toThrow(String(status));
+			});
+			expect(f.bodies).toHaveLength(1);
+		}
+	});
+
+	it("retry: false sends once", async () => {
+		const f = flaky(1, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			await expect(
+				createHttpFacilitator({ baseUrl, retry: false }).settle(SETTLE_REQ),
+			).rejects.toThrow(/503/);
+		});
+		expect(f.bodies).toHaveLength(1);
+	});
+
+	it("retries a network error (the connection dropped)", async () => {
+		let calls = 0;
+		const fetchImpl: typeof fetch = async (input, init) => {
+			calls++;
+			if (calls === 1) throw new TypeError("fetch failed");
+			return fetch(input, init);
+		};
+		const f = flaky(0, unavailable(), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({
+				baseUrl,
+				fetch: fetchImpl,
+				retry: { initialDelayMs: 1 },
+			});
+			expect((await facilitator.settle(SETTLE_REQ)).success).toBe(true);
+		});
+		expect(calls).toBe(2);
+	});
+});
+
+describe("createHttpFacilitator — timeoutMs (#53)", () => {
+	const silent: Parameters<typeof withHttpListener>[0] = () => {
+		// never answers
+	};
+
+	it("a /settle that does not answer in time throws X402FacilitatorTimeoutError — outcome unknown", async () => {
+		await withHttpListener(silent, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({ baseUrl, timeoutMs: 50, retry: false });
+			const error = await facilitator.settle(SETTLE_REQ).then(
+				() => null,
+				(e: unknown) => e,
+			);
+			expect(error).toBeInstanceOf(X402FacilitatorTimeoutError);
+			expect((error as X402FacilitatorTimeoutError).endpoint).toBe("settle");
+			expect((error as Error).message).toMatch(/may still settle/);
+		});
+	});
+
+	it("a timed-out attempt is retried within the budget, then reported as a timeout", async () => {
+		let calls = 0;
+		await withHttpListener(
+			() => {
+				calls++;
+			},
+			async (baseUrl) => {
+				const facilitator = createHttpFacilitator({
+					baseUrl,
+					timeoutMs: 50,
+					retry: { maxAttempts: 2, initialDelayMs: 1 },
+				});
+				await expect(facilitator.verify(SETTLE_REQ)).rejects.toBeInstanceOf(
+					X402FacilitatorTimeoutError,
+				);
+			},
+		);
+		expect(calls).toBe(2);
 	});
 });
 

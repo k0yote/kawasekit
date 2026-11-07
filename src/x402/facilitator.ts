@@ -24,6 +24,7 @@ import {
 	type VerifyEvent,
 } from "../observability/hooks";
 import { JPYC_EIP712_DOMAIN_HINT, JPYC_V2_ADDRESS, jpycAbi } from "../tokens/jpyc";
+import { X402FacilitatorTimeoutError } from "./errors";
 import type {
 	Facilitator,
 	X402PaymentRequirements,
@@ -59,6 +60,12 @@ export const X402_FACILITATOR_ERROR_CODES = {
 	invalid_payload: "invalid_payload",
 	invalid_scheme: "invalid_scheme",
 	invalid_transaction_state: "invalid_transaction_state",
+	/**
+	 * Non-terminal (x402 v2 §9): the transaction was broadcast but its confirmation could not be
+	 * established in time. Carried with `success: false` and a non-empty `transaction`. Not a
+	 * failed payment — and not permission to pay again.
+	 */
+	settlement_pending: "settlement_pending",
 	unexpected_settle_error: "unexpected_settle_error",
 	unexpected_verify_error: "unexpected_verify_error",
 } as const;
@@ -731,7 +738,62 @@ export interface CreateHttpFacilitatorParams {
 	 * an `undici` Agent in Node).
 	 */
 	readonly fetch?: typeof fetch;
+	/**
+	 * Resend `/verify` and `/settle` with the SAME body when the facilitator
+	 * could not take the request: HTTP 502 / 503 / 504, a network error, or a
+	 * `timeoutMs` timeout. `Retry-After` (seconds or an HTTP date) is honoured;
+	 * otherwise the wait starts at `initialDelayMs` and doubles. No attempt is
+	 * started whose wait would overrun `budgetMs`.
+	 *
+	 * Resending is fund-safe: the body carries the same signed authorization,
+	 * and EIP-3009 spends its nonce once on chain, so a resend can never charge
+	 * twice. Other statuses (4xx, 500) are not retried — they are answers, not
+	 * an unavailable facilitator.
+	 *
+	 * On by default (`{ maxAttempts: 3, budgetMs: 10_000, initialDelayMs: 500 }`);
+	 * `false` sends each request once.
+	 */
+	readonly retry?: X402FacilitatorRetryOptions | false;
+	/**
+	 * Abort an attempt that has not answered within this many milliseconds.
+	 * Absent: no timeout. A `/settle` that times out on its last attempt throws
+	 * {@link X402FacilitatorTimeoutError}: its outcome is unknown, not failed.
+	 */
+	readonly timeoutMs?: number;
 }
+
+/**
+ * How {@link createHttpFacilitator} resends a request the facilitator could not
+ * take. Every field is optional; see `CreateHttpFacilitatorParams.retry`.
+ */
+export interface X402FacilitatorRetryOptions {
+	/** Attempts per call, the first included. Default 3. */
+	readonly maxAttempts?: number;
+	/** Wall-clock budget for one call's waits, in milliseconds. Default 10_000. */
+	readonly budgetMs?: number;
+	/** Wait before the first resend when the facilitator sent no `Retry-After`. Default 500; doubles. */
+	readonly initialDelayMs?: number;
+}
+
+const DEFAULT_RETRY: Required<X402FacilitatorRetryOptions> = {
+	maxAttempts: 3,
+	budgetMs: 10_000,
+	initialDelayMs: 500,
+};
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+/** `Retry-After` as milliseconds: delta-seconds or an HTTP date; `undefined` when absent or unreadable. */
+function parseRetryAfter(value: string | null, nowMs: number): number | undefined {
+	if (value === null || value.trim() === "") return undefined;
+	if (/^\d+$/.test(value.trim())) return Number(value.trim()) * 1000;
+	const at = Date.parse(value);
+	return Number.isNaN(at) ? undefined : Math.max(0, at - nowMs);
+}
+
+/** One attempt's outcome: an answer to return or throw, or a failure worth resending. */
+type AttemptResult =
+	| { readonly kind: "answer"; readonly response: Response; readonly text: string }
+	| { readonly kind: "retryable"; readonly error: Error; readonly retryAfterMs?: number };
 
 /**
  * Builds a facilitator that proxies all RPC over HTTP to a remote endpoint,
@@ -758,18 +820,68 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 	const baseUrl = params.baseUrl.replace(/\/$/, "");
 	const fetchImpl = params.fetch ?? fetch;
 	const getAuthHeaders = params.getAuthHeaders;
+	const retry = params.retry === false ? null : { ...DEFAULT_RETRY, ...params.retry };
+	const timeoutMs = params.timeoutMs;
 
-	async function post<TResponse>(endpoint: "verify" | "settle", body: unknown): Promise<TResponse> {
+	async function attempt(endpoint: "verify" | "settle", body: string): Promise<AttemptResult> {
 		const headers: Record<string, string> = { "content-type": "application/json" };
 		if (getAuthHeaders) {
 			Object.assign(headers, await getAuthHeaders(endpoint));
 		}
-		const response = await fetchImpl(`${baseUrl}/${endpoint}`, {
-			method: "POST",
-			headers,
-			body: JSON.stringify(body),
-		});
-		const text = await response.text();
+		const controller = timeoutMs !== undefined ? new AbortController() : undefined;
+		const timer =
+			controller !== undefined ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+		try {
+			const response = await fetchImpl(`${baseUrl}/${endpoint}`, {
+				method: "POST",
+				headers,
+				body,
+				...(controller !== undefined ? { signal: controller.signal } : {}),
+			});
+			const text = await response.text();
+			if (RETRYABLE_STATUS.has(response.status)) {
+				const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"), Date.now());
+				return {
+					kind: "retryable",
+					error: new Error(
+						`Facilitator ${endpoint} failed (status ${response.status}): ${text.slice(0, 200)}`,
+					),
+					...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+				};
+			}
+			return { kind: "answer", response, text };
+		} catch (cause) {
+			if (controller?.signal.aborted === true && timeoutMs !== undefined) {
+				return {
+					kind: "retryable",
+					error: new X402FacilitatorTimeoutError(endpoint, timeoutMs, { cause }),
+				};
+			}
+			// The request never produced a response: a dropped connection, DNS, a refused socket.
+			return {
+				kind: "retryable",
+				error: cause instanceof Error ? cause : new Error(String(cause)),
+			};
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+		}
+	}
+
+	async function post<TResponse>(endpoint: "verify" | "settle", body: unknown): Promise<TResponse> {
+		// One serialisation for every attempt: a resend carries byte-identical content.
+		const serialized = JSON.stringify(body);
+		const startedAt = Date.now();
+		let delayMs = retry?.initialDelayMs ?? 0;
+		let result = await attempt(endpoint, serialized);
+		for (let attempts = 1; result.kind === "retryable"; attempts++) {
+			if (retry === null || attempts >= retry.maxAttempts) throw result.error;
+			const waitMs = result.retryAfterMs ?? delayMs;
+			if (Date.now() - startedAt + waitMs > retry.budgetMs) throw result.error;
+			await new Promise((resolve) => setTimeout(resolve, waitMs));
+			delayMs *= 2;
+			result = await attempt(endpoint, serialized);
+		}
+		const { response, text } = result;
 		let parsed: unknown;
 		try {
 			parsed = text === "" ? null : JSON.parse(text);
