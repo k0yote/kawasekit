@@ -23,7 +23,7 @@
  */
 
 import type { Hex } from "viem";
-import { getAddress } from "viem";
+import { getAddress, isAddress } from "viem";
 import {
 	createInMemoryIdempotencyStore,
 	type IdempotencyLease,
@@ -49,7 +49,11 @@ import {
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./encoding";
-import { X402InvalidPayloadError } from "./errors";
+import {
+	X402FacilitatorTimeoutError,
+	X402InvalidPayloadError,
+	X402SettleOutcomeUnknownError,
+} from "./errors";
 import { buildPaymentRequiredResponse } from "./payment-requirements";
 import type {
 	Facilitator,
@@ -129,6 +133,21 @@ export interface CreateX402HandlerParams {
 	 * is the backstop.
 	 */
 	readonly idempotency?: IdempotencyServerConfig;
+	/**
+	 * How many times to resend the identical `/settle` when the facilitator
+	 * answers `settlement_pending` (x402 v2 §9: broadcast, confirmation not yet
+	 * established — non-terminal). Default 1, as the x402 reference server does.
+	 *
+	 * Still pending after the resends: the client gets **402** with a
+	 * `PAYMENT-RESPONSE` header carrying `errorReason: "settlement_pending"` and
+	 * the transaction hash, so it can reconcile on chain — the payment may still
+	 * land, and paying again would pay twice. The idempotency lease is kept, so
+	 * a duplicate of that request is not settled again: while the payment is
+	 * still pending it is answered `payment_in_progress`. (Verify runs first, so
+	 * once the transaction confirms, a duplicate is refused by verify — the nonce
+	 * is spent.)
+	 */
+	readonly settlementPendingRetries?: number;
 }
 
 /** Server-side idempotency configuration (M5-1). See {@link CreateX402HandlerParams.idempotency}. */
@@ -172,22 +191,50 @@ function isSameRequirements(
 	);
 }
 
+/**
+ * x402 v2 §9 `settlement_pending`: broadcast, confirmation not yet established. Non-terminal.
+ * Decided on `errorReason` alone: a facilitator that leaves `transaction` empty (the spec says it
+ * must not) is still saying the payment may land.
+ */
+function isPending(result: X402SettlementResponse): boolean {
+	return !result.success && result.errorReason === "settlement_pending";
+}
+
 async function paymentRequired(
 	request: Request,
 	requirements: readonly X402PaymentRequirements[],
 	resourceFor: ((r: Request) => Promise<X402ResourceInfo> | X402ResourceInfo) | undefined,
 	error: string,
+	settlement?: X402SettlementResponse,
 ): Promise<Response> {
 	const resource = resourceFor ? await resourceFor(request) : defaultResource(request);
 	const body = buildPaymentRequiredResponse({ resource, accepts: requirements, error });
 	const headers = new Headers({ "content-type": "application/json" });
 	headers.set(X402_HEADER_PAYMENT_REQUIRED, encodePaymentRequiredHeader(body));
+	// A failed or pending settlement travels back too (x402 v2 HTTP transport, failure example) —
+	// only what the client needs to reconcile. `errorMessage` and `extra` stay server-side: a
+	// facilitator's message can quote an RPC URL, which can carry an API key.
+	if (settlement !== undefined) {
+		headers.set(
+			X402_HEADER_PAYMENT_RESPONSE,
+			encodePaymentResponseHeader({
+				success: settlement.success,
+				...(settlement.errorReason !== undefined ? { errorReason: settlement.errorReason } : {}),
+				transaction: settlement.transaction,
+				network: settlement.network,
+				...(settlement.payer !== undefined ? { payer: settlement.payer } : {}),
+			}),
+		);
+	}
 	return new Response(JSON.stringify(body), { status: 402, headers });
 }
 
-function internalError(reason: string, cause: unknown): Response {
-	const message = cause instanceof Error ? cause.message : String(cause);
-	return new Response(JSON.stringify({ error: reason, message }), {
+/**
+ * A 500 that names the failure and nothing else: a thrown message can quote a facilitator's
+ * response body or an RPC URL, and an RPC URL can carry an API key.
+ */
+function internalError(reason: string, _cause: unknown): Response {
+	return new Response(JSON.stringify({ error: reason }), {
 		status: 500,
 		headers: { "content-type": "application/json" },
 	});
@@ -258,7 +305,7 @@ function base64ToBytes(b64: string): Uint8Array {
 /** Defensively read the EIP-3009 nonce + validBefore from an opaque payload. */
 function readAuthorization(
 	payload: X402PaymentPayload,
-): { readonly nonce: string; readonly validBefore: bigint } | null {
+): { readonly nonce: string; readonly validBefore: bigint; readonly from?: string } | null {
 	const inner = payload.payload;
 	if (typeof inner !== "object" || inner === null) {
 		return null;
@@ -267,7 +314,7 @@ function readAuthorization(
 	if (typeof auth !== "object" || auth === null) {
 		return null;
 	}
-	const a = auth as { nonce?: unknown; validBefore?: unknown };
+	const a = auth as { nonce?: unknown; validBefore?: unknown; from?: unknown };
 	if (typeof a.nonce !== "string" || a.nonce === "") {
 		return null;
 	}
@@ -275,34 +322,39 @@ function readAuthorization(
 		typeof a.validBefore === "string" && /^[0-9]+$/.test(a.validBefore)
 			? BigInt(a.validBefore)
 			: 0n;
-	return { nonce: a.nonce, validBefore };
+	return typeof a.from === "string" && isAddress(a.from)
+		? { nonce: a.nonce, validBefore, from: getAddress(a.from) }
+		: { nonce: a.nonce, validBefore };
 }
 
 /**
  * The server dedup key: the client `Idempotency-Key` header when present (the
  * logical reasoning-step key, working even for signers that cannot derive a
- * nonce), else the EIP-3009 nonce — both namespaced by (network, payTo, asset)
- * for cross-tenant isolation. `null` ⇒ no key can be formed; dedup is skipped
- * (the on-chain nonce still backstops fund-correctness).
+ * nonce), else the EIP-3009 nonce — namespaced by (network, payTo, asset) for
+ * cross-tenant isolation, and bound to the payer (the verified authorization's
+ * `from`) and the resource (method + path + query): a replay hands back an
+ * earlier paid response without settling, so it must only ever go to the payer
+ * who paid for that resource. Without a payer no key is formed. `null` ⇒ dedup
+ * is skipped (the on-chain nonce still backstops fund-correctness).
  */
 function computeServerKey(
 	request: Request,
 	requirements: X402PaymentRequirements,
-	auth: { readonly nonce: string } | null,
+	auth: { readonly nonce: string; readonly from?: string } | null,
 ): string | null {
-	const header = request.headers.get(X402_HEADER_IDEMPOTENCY_KEY);
-	let material: string;
-	if (header !== null && header !== "") {
-		material = `hdr:${header}`;
-	} else if (auth !== null) {
-		material = `nonce:${auth.nonce}`;
-	} else {
+	if (auth?.from === undefined) {
 		return null;
 	}
+	const header = request.headers.get(X402_HEADER_IDEMPOTENCY_KEY);
+	const material = header !== null && header !== "" ? `hdr:${header}` : `nonce:${auth.nonce}`;
+	const url = new URL(request.url);
 	return JSON.stringify([
 		requirements.network,
 		getAddress(requirements.payTo),
 		getAddress(requirements.asset),
+		auth.from,
+		request.method,
+		`${url.pathname}${url.search}`,
 		material,
 	]);
 }
@@ -485,8 +537,10 @@ async function resolveInFlight(
  */
 export function createX402Handler(params: CreateX402HandlerParams): X402RequestHandler {
 	const { facilitator, requirementsFor, handler, resourceFor, hooks } = params;
-	// Resolved ONCE so the in-memory store persists across requests (the Hono
-	// adapter rebuilds the handler per request, so this must live in the closure).
+	const settlementPendingRetries = params.settlementPendingRetries ?? 1;
+	// Resolved ONCE so the in-memory store persists across requests made through this handler.
+	// (The Hono adapter rebuilds the handler per request, so it resolves one store itself and
+	// passes it in.)
 	const idempotency = resolveIdempotency(params.idempotency);
 
 	return async function x402Handler(request: Request): Promise<Response> {
@@ -495,6 +549,7 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 		const emitPaymentRequired = (
 			reqs: readonly X402PaymentRequirements[],
 			error: string,
+			settlement?: X402SettlementResponse,
 		): Promise<Response> => {
 			const event: PaymentRequiredEvent = {
 				kind: "payment_required",
@@ -504,7 +559,7 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 				acceptedNetworks: extractAcceptedNetworks(reqs),
 			};
 			invokeHookSafely(hooks?.onPaymentRequired, event);
-			return paymentRequired(request, reqs, resourceFor, error);
+			return paymentRequired(request, reqs, resourceFor, error, settlement);
 		};
 
 		// 1. Resolve requirements (or pass through)
@@ -589,20 +644,55 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 		}
 
 		// 6. Settle
+		const settleRequest = {
+			x402Version: X402_VERSION,
+			paymentPayload,
+			paymentRequirements: matchedRequirements,
+		} as const;
 		let settleResult: Awaited<ReturnType<Facilitator["settle"]>>;
 		try {
-			settleResult = await facilitator.settle({
-				x402Version: X402_VERSION,
-				paymentPayload,
-				paymentRequirements: matchedRequirements,
-			});
+			settleResult = await facilitator.settle(settleRequest);
 		} catch (cause) {
+			if (
+				cause instanceof X402SettleOutcomeUnknownError ||
+				(cause instanceof X402FacilitatorTimeoutError && cause.endpoint === "settle")
+			) {
+				// Outcome unknown: the payment may still land. Keep the lease so a duplicate is told
+				// "in progress" rather than settling — and being refused — a second time.
+				return internalError("facilitator_settle_outcome_unknown", cause);
+			}
 			await releaseLease(idempotency, idemKey, lease);
 			return internalError("facilitator_settle_failed", cause);
 		}
+		// 6b. Pending (x402 v2 §9): broadcast, not yet confirmed. Resend the identical request —
+		// fund-safe, the authorization's nonce is spent once on chain.
+		// Only a success replaces a pending answer: a later failure (say, the nonce is already
+		// spent — because the pending transaction just confirmed) does not prove the broadcast
+		// transaction failed, and reporting it as failed would invite the payer to pay again.
+		for (let resend = 0; resend < settlementPendingRetries && isPending(settleResult); resend++) {
+			let next: X402SettlementResponse;
+			try {
+				next = await facilitator.settle(settleRequest);
+			} catch {
+				break;
+			}
+			if (next.success || isPending(next)) {
+				settleResult = next;
+			} else {
+				break;
+			}
+		}
 		if (!settleResult.success) {
+			if (isPending(settleResult)) {
+				// The lease stays: the payment may still land, so a duplicate must not settle again.
+				return emitPaymentRequired(requirements, "settlement_pending", settleResult);
+			}
 			await releaseLease(idempotency, idemKey, lease);
-			return emitPaymentRequired(requirements, settleResult.errorReason ?? "settle failed");
+			return emitPaymentRequired(
+				requirements,
+				settleResult.errorReason ?? "settle failed",
+				settleResult,
+			);
 		}
 
 		// 7. Settled — emit onPaymentAccepted then invoke inner handler.

@@ -1,6 +1,12 @@
+import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import { readBody, withHttpListener } from "../../test/helpers/http-listener";
 import { JPYC_V2_ADDRESS } from "../tokens/jpyc";
+import {
+	X402FacilitatorTimeoutError,
+	X402InvalidConfigError,
+	X402SettleOutcomeUnknownError,
+} from "./errors";
 import { createCoinbaseFacilitator, createHttpFacilitator } from "./facilitator";
 import type {
 	X402PaymentPayload,
@@ -223,6 +229,297 @@ describe("createHttpFacilitator — settle", () => {
 	});
 });
 
+const SETTLED: X402SettleResponse = {
+	success: true,
+	transaction: `0x${"12".repeat(32)}`,
+	network: "eip155:80002",
+	payer: "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+};
+
+const SETTLE_REQ = { x402Version: 2, paymentPayload: PAYLOAD, paymentRequirements: REQS } as const;
+
+/** Answer the first `failures` requests with `fail`, then `ok`; record every body received. */
+function flaky(
+	failures: number,
+	fail: (res: import("node:http").ServerResponse) => void,
+	ok: unknown,
+): { bodies: string[]; handler: Parameters<typeof withHttpListener>[0] } {
+	const bodies: string[] = [];
+	return {
+		bodies,
+		handler: async (req, res) => {
+			bodies.push(await readBody(req));
+			if (bodies.length <= failures) {
+				fail(res);
+				return;
+			}
+			res.setHeader("content-type", "application/json");
+			res.end(JSON.stringify(ok));
+		},
+	};
+}
+
+const unavailable =
+	(retryAfter?: string) =>
+	(res: import("node:http").ServerResponse): void => {
+		res.statusCode = 503;
+		if (retryAfter !== undefined) res.setHeader("retry-after", retryAfter);
+		res.setHeader("content-type", "application/json");
+		res.end(JSON.stringify({ error: "unavailable" }));
+	};
+
+// #53: a facilitator that could not take the request is retried with the SAME body. Resending the
+// same authorization cannot charge twice — EIP-3009 consumes its nonce once on chain. But /settle is
+// resent ONLY on 503 (the facilitator says it did not take the request): after a 502/504, a dropped
+// connection or a timeout the first attempt may have broadcast, and a resend that then answers
+// "nonce already used" would be reported as a failed payment that is in fact landing.
+describe("createHttpFacilitator — retry on 502/503/504 and network errors (#53)", () => {
+	it("retries /settle after a 503 with the identical body, and returns the eventual answer", async () => {
+		const f = flaky(2, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } });
+			const result = await facilitator.settle(SETTLE_REQ);
+			expect(result).toEqual(SETTLED);
+		});
+		expect(f.bodies).toHaveLength(3);
+		expect(new Set(f.bodies).size).toBe(1);
+	});
+
+	it("retries /verify on 502 and 504 (verify moves no funds)", async () => {
+		for (const status of [502, 504]) {
+			const f = flaky(
+				1,
+				(res) => {
+					res.statusCode = status;
+					res.end("");
+				},
+				{ isValid: true } satisfies X402VerifyResponse,
+			);
+			await withHttpListener(f.handler, async (baseUrl) => {
+				const facilitator = createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } });
+				expect((await facilitator.verify(SETTLE_REQ)).isValid).toBe(true);
+			});
+			expect(f.bodies).toHaveLength(2);
+		}
+	});
+
+	it("is on by default", async () => {
+		const f = flaky(1, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			expect((await createHttpFacilitator({ baseUrl }).settle(SETTLE_REQ)).success).toBe(true);
+		});
+		expect(f.bodies).toHaveLength(2);
+	});
+
+	it("waits Retry-After before the next attempt", async () => {
+		const f = flaky(1, unavailable("1"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const started = Date.now();
+			await createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } }).settle(SETTLE_REQ);
+			expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+		});
+	});
+
+	it("stops at maxAttempts and throws the last failure", async () => {
+		const f = flaky(10, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({
+				baseUrl,
+				retry: { maxAttempts: 2, initialDelayMs: 1 },
+			});
+			await expect(facilitator.settle(SETTLE_REQ)).rejects.toThrow(/503/);
+		});
+		expect(f.bodies).toHaveLength(2);
+	});
+
+	it("does not start an attempt whose wait would overrun the budget", async () => {
+		const f = flaky(10, unavailable("5"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({ baseUrl, retry: { budgetMs: 1_000 } });
+			const started = Date.now();
+			await expect(facilitator.settle(SETTLE_REQ)).rejects.toThrow(/503/);
+			expect(Date.now() - started).toBeLessThan(1_000);
+		});
+		expect(f.bodies).toHaveLength(1);
+	});
+
+	it("does not retry other statuses (400, 500)", async () => {
+		for (const status of [400, 500]) {
+			const f = flaky(
+				10,
+				(res) => {
+					res.statusCode = status;
+					res.setHeader("content-type", "application/json");
+					res.end(JSON.stringify({ error: "nope" }));
+				},
+				SETTLED,
+			);
+			await withHttpListener(f.handler, async (baseUrl) => {
+				await expect(
+					createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } }).settle(SETTLE_REQ),
+				).rejects.toThrow(String(status));
+			});
+			expect(f.bodies).toHaveLength(1);
+		}
+	});
+
+	it("retry: false sends once", async () => {
+		const f = flaky(1, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			await expect(
+				createHttpFacilitator({ baseUrl, retry: false }).settle(SETTLE_REQ),
+			).rejects.toThrow(/503/);
+		});
+		expect(f.bodies).toHaveLength(1);
+	});
+
+	it("does not resend /settle after a 502 or 504 — the first attempt may have broadcast", async () => {
+		for (const status of [502, 504]) {
+			const f = flaky(
+				1,
+				(res) => {
+					res.statusCode = status;
+					res.end("");
+				},
+				SETTLED,
+			);
+			await withHttpListener(f.handler, async (baseUrl) => {
+				const error = await createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } })
+					.settle(SETTLE_REQ)
+					.then(
+						() => null,
+						(e: unknown) => e,
+					);
+				expect(error).toBeInstanceOf(X402SettleOutcomeUnknownError);
+				expect((error as Error).message).toMatch(String(status));
+			});
+			expect(f.bodies).toHaveLength(1);
+		}
+	});
+
+	it("does not resend /settle after a network error, and reports the outcome as unknown", async () => {
+		let calls = 0;
+		const fetchImpl: typeof fetch = async (input, init) => {
+			calls++;
+			if (calls === 1) throw new TypeError("fetch failed");
+			return fetch(input, init);
+		};
+		const f = flaky(0, unavailable(), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({
+				baseUrl,
+				fetch: fetchImpl,
+				retry: { initialDelayMs: 1 },
+			});
+			await expect(facilitator.settle(SETTLE_REQ)).rejects.toBeInstanceOf(
+				X402SettleOutcomeUnknownError,
+			);
+		});
+		expect(calls).toBe(1);
+	});
+
+	it("resends /settle when the connection was refused — nothing was sent", async () => {
+		let calls = 0;
+		const fetchImpl: typeof fetch = async (input, init) => {
+			calls++;
+			if (calls === 1) {
+				throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+			}
+			return fetch(input, init);
+		};
+		const f = flaky(0, unavailable(), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({
+				baseUrl,
+				fetch: fetchImpl,
+				retry: { initialDelayMs: 1 },
+			});
+			expect((await facilitator.settle(SETTLE_REQ)).success).toBe(true);
+		});
+		expect(calls).toBe(2);
+	});
+
+	it("retries /verify after a network error (the connection dropped)", async () => {
+		let calls = 0;
+		const fetchImpl: typeof fetch = async (input, init) => {
+			calls++;
+			if (calls === 1) throw new TypeError("fetch failed");
+			return fetch(input, init);
+		};
+		const f = flaky(0, unavailable(), { isValid: true } satisfies X402VerifyResponse);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({
+				baseUrl,
+				fetch: fetchImpl,
+				retry: { initialDelayMs: 1 },
+			});
+			expect((await facilitator.verify(SETTLE_REQ)).isValid).toBe(true);
+		});
+		expect(calls).toBe(2);
+	});
+});
+
+describe("createHttpFacilitator — timeoutMs (#53)", () => {
+	const silent: Parameters<typeof withHttpListener>[0] = () => {
+		// never answers
+	};
+
+	it("a /settle that does not answer in time throws X402SettleOutcomeUnknownError caused by the timeout", async () => {
+		await withHttpListener(silent, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({ baseUrl, timeoutMs: 50, retry: false });
+			const error = await facilitator.settle(SETTLE_REQ).then(
+				() => null,
+				(e: unknown) => e,
+			);
+			expect(error).toBeInstanceOf(X402SettleOutcomeUnknownError);
+			expect((error as Error).message).toMatch(/may still settle/);
+			const cause = (error as Error).cause;
+			expect(cause).toBeInstanceOf(X402FacilitatorTimeoutError);
+			expect((cause as X402FacilitatorTimeoutError).endpoint).toBe("settle");
+		});
+	});
+
+	it("a timed-out /settle is not resent, even with retry on", async () => {
+		let calls = 0;
+		await withHttpListener(
+			() => {
+				calls++;
+			},
+			async (baseUrl) => {
+				const facilitator = createHttpFacilitator({
+					baseUrl,
+					timeoutMs: 50,
+					retry: { initialDelayMs: 1 },
+				});
+				await expect(facilitator.settle(SETTLE_REQ)).rejects.toBeInstanceOf(
+					X402SettleOutcomeUnknownError,
+				);
+			},
+		);
+		expect(calls).toBe(1);
+	});
+
+	it("a timed-out /verify is retried within the budget, then reported as a timeout", async () => {
+		let calls = 0;
+		await withHttpListener(
+			() => {
+				calls++;
+			},
+			async (baseUrl) => {
+				const facilitator = createHttpFacilitator({
+					baseUrl,
+					timeoutMs: 50,
+					retry: { maxAttempts: 2, initialDelayMs: 1 },
+				});
+				await expect(facilitator.verify(SETTLE_REQ)).rejects.toBeInstanceOf(
+					X402FacilitatorTimeoutError,
+				);
+			},
+		);
+		expect(calls).toBe(2);
+	});
+});
+
 describe("createHttpFacilitator — supported", () => {
 	it("GETs /supported and returns parsed response", async () => {
 		let receivedMethod = "";
@@ -312,6 +609,162 @@ describe("createCoinbaseFacilitator (deprecated alias)", () => {
 			expect(warnings.filter((w) => w.code === "KAWASEKIT_DEP_001")).toHaveLength(1);
 		} finally {
 			process.off("warning", onWarning);
+		}
+	});
+});
+
+// Final review (#53): a /settle answer can only be trusted as a FINAL failure when nothing could
+// have acted on the payment before it. Once /settle has been resent, or when the facilitator
+// answers with something that is not a settle response, the outcome is unknown.
+describe("createHttpFacilitator — /settle outcomes that are unknown (#53 final review)", () => {
+	const notSettled: X402SettleResponse = {
+		success: false,
+		errorReason: "invalid_exact_evm_payload_signature",
+		transaction: "",
+		network: "eip155:80002",
+	};
+
+	it("a failure answered after a resend is unknown: the 503'd attempt may have broadcast", async () => {
+		const f = flaky(1, unavailable("0"), notSettled);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			await expect(
+				createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } }).settle(SETTLE_REQ),
+			).rejects.toBeInstanceOf(X402SettleOutcomeUnknownError);
+		});
+		expect(f.bodies).toHaveLength(2);
+	});
+
+	it("503 on every attempt after a resend is unknown, not a plain failure", async () => {
+		const f = flaky(10, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			await expect(
+				createHttpFacilitator({ baseUrl, retry: { maxAttempts: 2, initialDelayMs: 1 } }).settle(
+					SETTLE_REQ,
+				),
+			).rejects.toBeInstanceOf(X402SettleOutcomeUnknownError);
+		});
+	});
+
+	it("even a single 503 is unknown — a proxy may answer 503 after forwarding the request", async () => {
+		const f = flaky(10, unavailable("0"), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			await expect(
+				createHttpFacilitator({ baseUrl, retry: false }).settle(SETTLE_REQ),
+			).rejects.toBeInstanceOf(X402SettleOutcomeUnknownError);
+		});
+	});
+
+	it("a pending or successful answer after a resend is returned as is", async () => {
+		const pending: X402SettleResponse = {
+			success: false,
+			errorReason: "settlement_pending",
+			transaction: `0x${"77".repeat(32)}`,
+			network: "eip155:80002",
+		};
+		for (const answer of [pending, SETTLED]) {
+			const f = flaky(1, unavailable("0"), answer);
+			await withHttpListener(f.handler, async (baseUrl) => {
+				expect(
+					await createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } }).settle(SETTLE_REQ),
+				).toEqual(answer);
+			});
+		}
+	});
+
+	it("a non-2xx /settle whose body is not a settle response is unknown (a catch-all 400 / 500)", async () => {
+		for (const [status, body] of [
+			[400, JSON.stringify({ error: "boom" })],
+			[500, "Internal Server Error"],
+		] as const) {
+			await withHttpListener(
+				(_req, res) => {
+					res.statusCode = status;
+					res.end(body);
+				},
+				async (baseUrl) => {
+					await expect(
+						createHttpFacilitator({ baseUrl, retry: false }).settle(SETTLE_REQ),
+					).rejects.toBeInstanceOf(X402SettleOutcomeUnknownError);
+				},
+			);
+		}
+	});
+
+	it("a non-2xx /settle carrying a settle response is that answer", async () => {
+		await withHttpListener(
+			(_req, res) => {
+				res.statusCode = 400;
+				res.setHeader("content-type", "application/json");
+				res.end(JSON.stringify(notSettled));
+			},
+			async (baseUrl) => {
+				expect(await createHttpFacilitator({ baseUrl, retry: false }).settle(SETTLE_REQ)).toEqual(
+					notSettled,
+				);
+			},
+		);
+	});
+
+	it("a 2xx /settle that is not a settle response is unknown", async () => {
+		await withHttpListener(
+			(_req, res) => {
+				res.end("not json");
+			},
+			async (baseUrl) => {
+				await expect(
+					createHttpFacilitator({ baseUrl, retry: false }).settle(SETTLE_REQ),
+				).rejects.toBeInstanceOf(X402SettleOutcomeUnknownError);
+			},
+		);
+	});
+
+	it("resends /settle when the port refuses the connection (a real refusal)", async () => {
+		// Reserve a free port, then close it: connecting is refused before anything is sent.
+		const port = await new Promise<number>((resolve) => {
+			const probe = createServer();
+			probe.listen(0, "127.0.0.1", () => {
+				const address = probe.address();
+				const free = typeof address === "object" && address !== null ? address.port : 0;
+				probe.close(() => resolve(free));
+			});
+		});
+		const facilitator = createHttpFacilitator({
+			baseUrl: `http://127.0.0.1:${port}`,
+			retry: { maxAttempts: 2, initialDelayMs: 1 },
+		});
+		const error = await facilitator.settle(SETTLE_REQ).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		// Both attempts were refused: nothing reached a facilitator, so this is a plain failure.
+		expect(error).toBeInstanceOf(Error);
+		expect(error).not.toBeInstanceOf(X402SettleOutcomeUnknownError);
+	});
+
+	it("honours Retry-After given as an HTTP date", async () => {
+		const f = flaky(1, unavailable(new Date(Date.now() + 1_500).toUTCString()), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const started = Date.now();
+			await createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } }).verify(SETTLE_REQ);
+			expect(Date.now() - started).toBeGreaterThanOrEqual(400);
+		});
+		expect(f.bodies).toHaveLength(2);
+	});
+});
+
+describe("createHttpFacilitator — option validation (#53 final review)", () => {
+	it("refuses a retry or timeout setting that is not a usable number", () => {
+		for (const params of [
+			{ retry: { maxAttempts: 0 } },
+			{ retry: { maxAttempts: 1.5 } },
+			{ retry: { budgetMs: Number.NaN } },
+			{ retry: { initialDelayMs: -1 } },
+			{ timeoutMs: 0 },
+			{ timeoutMs: Number.POSITIVE_INFINITY },
+		]) {
+			expect(() => createHttpFacilitator({ baseUrl: "http://x.test", ...params })).toThrow(
+				X402InvalidConfigError,
+			);
 		}
 	});
 });

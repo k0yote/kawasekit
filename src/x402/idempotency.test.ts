@@ -290,3 +290,57 @@ describe("wrapFetch — idempotency key propagation", () => {
 		expect(retryHeaders?.get(X402_HEADER_IDEMPOTENCY_KEY)).toBe("my-step-key");
 	});
 });
+
+// Security review (#53 branch): a replayed record must belong to the same payer and the same
+// resource. Otherwise another payer who sends the same Idempotency-Key — or copies a public nonce
+// into their own authorization — gets the earlier response without their payment ever settling.
+describe("server idempotency — a replay is bound to the payer and the resource", () => {
+	const OTHER_PAYER = "0x1111111111111111111111111111111111111111";
+	function payloadFrom(from: string, nonce: string): X402PaymentPayload {
+		const base = payloadWith(nonce);
+		const inner = base.payload as { signature: string; authorization: Record<string, string> };
+		return { ...base, payload: { ...inner, authorization: { ...inner.authorization, from } } };
+	}
+
+	it("the same Idempotency-Key from another payer is settled, not replayed", async () => {
+		const settle = vi.fn(async () => SETTLEMENT_OK);
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({ ok: true }),
+			idempotency: { store: freshStore() },
+		});
+		await handler(paidRequest("https://api/x", payloadWith(NONCE_A), { "Idempotency-Key": "k" }));
+		const r2 = await handler(
+			paidRequest("https://api/x", payloadFrom(OTHER_PAYER, NONCE_B), { "Idempotency-Key": "k" }),
+		);
+		expect(settle).toHaveBeenCalledTimes(2);
+		expect(r2.headers.get("Idempotency-Replayed")).toBeNull();
+	});
+
+	it("another payer's authorization reusing a nonce is settled, not replayed", async () => {
+		const settle = vi.fn(async () => SETTLEMENT_OK);
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({ ok: true }),
+			idempotency: { store: freshStore() },
+		});
+		await handler(paidRequest("https://api/x", payloadWith(NONCE_A)));
+		await handler(paidRequest("https://api/x", payloadFrom(OTHER_PAYER, NONCE_A)));
+		expect(settle).toHaveBeenCalledTimes(2);
+	});
+
+	it("the same key for another resource is settled, not replayed", async () => {
+		const settle = vi.fn(async () => SETTLEMENT_OK);
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({ ok: true }),
+			idempotency: { store: freshStore() },
+		});
+		await handler(paidRequest("https://api/x", payloadWith(NONCE_A), { "Idempotency-Key": "k" }));
+		await handler(paidRequest("https://api/y", payloadWith(NONCE_B), { "Idempotency-Key": "k" }));
+		expect(settle).toHaveBeenCalledTimes(2);
+	});
+});

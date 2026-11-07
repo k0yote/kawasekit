@@ -128,9 +128,16 @@ export type ClientPaymentEvent =
 			readonly kind: "client_payment";
 			readonly result: "failure";
 			readonly requestUrl: string;
-			/** Short label: `onPayment_declined` / `no_acceptable_requirement` / `settle_rejected` / `http_error`. */
+			/**
+			 * Short label: `onPayment_declined` / `no_acceptable_requirement` / `settle_rejected` /
+			 * `settlement_pending` / `settle_outcome_unknown` / `http_error`. `settlement_pending` and
+			 * `settle_outcome_unknown` are not failed payments: the payment may still land — reconcile
+			 * on chain (`transaction`, when known), and do not pay again.
+			 */
 			readonly reason: string;
 			readonly httpStatus?: number;
+			/** The broadcast transaction, when `reason` is `settlement_pending` and the server named it. */
+			readonly transaction?: Hex;
 	  });
 
 /** Discriminated union of every event the hook surface may emit. */

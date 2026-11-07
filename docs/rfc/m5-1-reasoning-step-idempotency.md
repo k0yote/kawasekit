@@ -249,7 +249,11 @@ Insert between verify-success (`server.ts:286`) and settle (`server.ts:288`):
    - **else fall back to the EIP-3009 nonce** in the payload (covers identical
      re-sends only).
    In both cases namespace by `(network, payTo, asset)` → **cross-tenant
-   isolation** (one merchant's keys can never collide with another's). *Impl
+   isolation** (one merchant's keys can never collide with another's).
+   *Update 2026-11-07 (#53 release): the key is also bound to the payer (the
+   verified authorization's `from`) and the resource (method + path + query). A
+   replay hands back a paid response without settling; keyed only as above,
+   another payer reusing the header or a public nonce got it without paying.* *Impl
    note (L2): `server.ts` does not currently narrow the payload — Phase B must
    export/extract `narrowExactEvmPayload` (`facilitator.ts:97-126`) to read the
    nonce, or rely on the header path, which needs no narrowing.*

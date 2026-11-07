@@ -15,6 +15,17 @@
  * If the second attempt still fails the wrapper returns that response so the
  * caller can decide how to recover.
  *
+ * **A pending payment is not a failed one.** When the second attempt is
+ * answered 402 with a `PAYMENT-RESPONSE` saying `settlement_pending` (x402 v2
+ * §9), the transaction was broadcast and may still land; `onClientPayment`
+ * reports reason `settlement_pending` with its `transaction`. Do not repeat the
+ * purchase — a new attempt signs a new authorization and can pay twice —
+ * reconcile the transaction on chain instead. The same holds for a 500
+ * `facilitator_settle_outcome_unknown` (reason `settle_outcome_unknown`) — and,
+ * strictly, for any non-2xx answer to the signed retry: the authorization was
+ * handed over and may have been settled. Set `idempotencyKeyFor` so a repeated
+ * purchase derives the same nonce, which the chain spends once.
+ *
  * Streaming request bodies are not retry-safe; the wrapper passes `init.body`
  * through verbatim, so callers who need retry must pass a buffered body
  * (string / Uint8Array / ArrayBuffer / FormData).
@@ -149,6 +160,39 @@ function defaultSelectRequirements(
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether a 402's `PAYMENT-RESPONSE` says `settlement_pending`, and the transaction it names. Decided
+ * on `errorReason` alone: a pending answer without a transaction (against the spec) is still pending.
+ */
+function readPendingSettlement(response: Response): { readonly transaction?: Hex } | undefined {
+	const header = response.headers.get(X402_HEADER_PAYMENT_RESPONSE);
+	if (header === null || header === "") return undefined;
+	try {
+		const settlement = decodePaymentResponseHeader(header);
+		if (settlement.errorReason !== "settlement_pending") return undefined;
+		return settlement.transaction !== ""
+			? { transaction: settlement.transaction as Hex } // the settle response's `transaction` is a tx hash
+			: {};
+	} catch {
+		return undefined;
+	}
+}
+
+/** Whether a 5xx says the server could not tell if the payment settled (`createX402Handler`). */
+async function isSettleOutcomeUnknown(response: Response): Promise<boolean> {
+	try {
+		const body: unknown = await response.clone().json();
+		return (
+			typeof body === "object" &&
+			body !== null &&
+			"error" in body &&
+			body.error === "facilitator_settle_outcome_unknown"
+		);
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Returns an x402-aware `fetch` that pays for `402` responses on the caller's
  * behalf using the provided signer.
  *
@@ -188,7 +232,11 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 		const requestUrl =
 			typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 
-		const emitFailure = (reason: string, httpStatus: number | undefined): void => {
+		const emitFailure = (
+			reason: string,
+			httpStatus: number | undefined,
+			transaction?: Hex,
+		): void => {
 			const event: ClientPaymentEvent = {
 				kind: "client_payment",
 				result: "failure",
@@ -197,6 +245,7 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 				requestUrl,
 				reason,
 				...(httpStatus !== undefined ? { httpStatus } : {}),
+				...(transaction !== undefined ? { transaction } : {}),
 			};
 			invokeHookSafely(hooks?.onClientPayment, event);
 		};
@@ -266,11 +315,20 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 				...(transaction !== undefined ? { transaction } : {}),
 			};
 			invokeHookSafely(hooks?.onClientPayment, successEvent);
+		} else if (retryResponse.status === 402) {
+			// x402 v2 §9: `settlement_pending` means broadcast, not yet confirmed — the payment may
+			// still land. Report the transaction so the caller reconciles on chain; never pay again.
+			const pending = readPendingSettlement(retryResponse);
+			if (pending !== undefined) {
+				emitFailure("settlement_pending", 402, pending.transaction);
+			} else {
+				emitFailure("settle_rejected", 402);
+			}
+		} else if (retryResponse.status >= 500 && (await isSettleOutcomeUnknown(retryResponse))) {
+			// The server could not tell whether the payment settled: as with pending, it may have.
+			emitFailure("settle_outcome_unknown", retryResponse.status);
 		} else {
-			emitFailure(
-				retryResponse.status === 402 ? "settle_rejected" : "http_error",
-				retryResponse.status,
-			);
+			emitFailure("http_error", retryResponse.status);
 		}
 
 		return retryResponse;

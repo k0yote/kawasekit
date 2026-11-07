@@ -13,6 +13,7 @@
  */
 
 import type { MiddlewareHandler } from "hono";
+import { createInMemoryIdempotencyStore } from "../../idempotency";
 import type { CreateX402HandlerParams, X402HandlerContext } from "../server";
 import { createX402Handler } from "../server";
 
@@ -89,12 +90,22 @@ export interface X402MiddlewareParams extends Omit<CreateX402HandlerParams, "han
  * ```
  */
 export function x402Middleware(params: X402MiddlewareParams): MiddlewareHandler {
-	const contextKey = params.contextKey ?? X402_HONO_CONTEXT_KEY;
+	const { contextKey: contextKeyParam, ...handlerParams } = params;
+	const contextKey = contextKeyParam ?? X402_HONO_CONTEXT_KEY;
+	// The handler is built per request (it needs that request's `next`), so the idempotency store is
+	// resolved ONCE here: a fresh store per request would forget every lease — including the one a
+	// pending payment keeps.
+	const idempotency =
+		params.idempotency?.store === "none"
+			? params.idempotency
+			: {
+					...params.idempotency,
+					store: params.idempotency?.store ?? createInMemoryIdempotencyStore(),
+				};
 	return async (c, next) => {
 		const handler = createX402Handler({
-			facilitator: params.facilitator,
-			requirementsFor: params.requirementsFor,
-			...(params.resourceFor ? { resourceFor: params.resourceFor } : {}),
+			...handlerParams,
+			idempotency,
 			handler: async (_request, ctx) => {
 				if (ctx !== null) {
 					// Hono's `c.set` constrains `key` to `keyof Variables`. The

@@ -85,6 +85,74 @@ export class X402InvalidConfigError extends Error {
 }
 
 /**
+ * A facilitator request that did not answer within `timeoutMs` ({@link createHttpFacilitator}).
+ * Thrown as is for `/verify`; for `/settle` it is the `cause` of an
+ * {@link X402SettleOutcomeUnknownError}, because a settle that did not answer may still land.
+ *
+ * @example
+ * ```ts
+ * import { X402FacilitatorTimeoutError } from "kawasekit";
+ *
+ * try {
+ *   await facilitator.verify(request);
+ * } catch (error) {
+ *   if (error instanceof X402FacilitatorTimeoutError) {
+ *     console.warn(`verify timed out after ${error.timeoutMs} ms`);
+ *   }
+ * }
+ * ```
+ */
+export class X402FacilitatorTimeoutError extends Error {
+	/** The facilitator endpoint that timed out. */
+	readonly endpoint: "verify" | "settle";
+	/** The per-attempt timeout, in milliseconds. */
+	readonly timeoutMs: number;
+
+	constructor(endpoint: "verify" | "settle", timeoutMs: number, options?: { cause?: unknown }) {
+		super(`Facilitator ${endpoint} did not answer within ${timeoutMs} ms`, options);
+		this.name = "X402FacilitatorTimeoutError";
+		this.endpoint = endpoint;
+		this.timeoutMs = timeoutMs;
+	}
+}
+
+/**
+ * A `/settle` whose outcome is **unknown** ({@link createHttpFacilitator}): something may have
+ * acted on it, and no answer says what happened. That is every thrown settle failure except one
+ * where nothing was ever sent (a refused connection, an unresolved host): a 502 / 503 / 504 (a proxy
+ * can answer 503 after forwarding), a connection dropped after sending, a `timeoutMs` timeout, a
+ * body that is not a settle response, or a failure answered only after a resend. The transaction
+ * may already be broadcast and may still land.
+ *
+ * Do not treat it as a failed payment, and never ask the payer for a new authorization because of
+ * it: reconcile on chain first (the authorization's nonce is spent once it settles).
+ * {@link createX402Handler} answers it with 500 `facilitator_settle_outcome_unknown` and keeps the
+ * idempotency lease. The underlying failure is `cause`.
+ *
+ * @example
+ * ```ts
+ * import { X402SettleOutcomeUnknownError } from "kawasekit";
+ *
+ * try {
+ *   await facilitator.settle(request);
+ * } catch (error) {
+ *   if (error instanceof X402SettleOutcomeUnknownError) {
+ *     // check the authorization's nonce on chain before anything else
+ *   }
+ * }
+ * ```
+ */
+export class X402SettleOutcomeUnknownError extends Error {
+	constructor(cause: Error) {
+		super(
+			`Facilitator settle outcome unknown (${cause.message}) — the payment may still settle. Reconcile on chain; do not ask for a new authorization.`,
+			{ cause },
+		);
+		this.name = "X402SettleOutcomeUnknownError";
+	}
+}
+
+/**
  * Thrown by {@link createX402PaymentSigner} (the `signer` variant) when the bound
  * `PolicyGatedSigner` refuses to sign — i.e. its `sign()` returned
  * `{ ok: false }`. Carries the typed {@link PolicyRejection} so callers can
