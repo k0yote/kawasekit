@@ -49,7 +49,7 @@ import {
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./encoding";
-import { X402InvalidPayloadError } from "./errors";
+import { X402FacilitatorTimeoutError, X402InvalidPayloadError } from "./errors";
 import { buildPaymentRequiredResponse } from "./payment-requirements";
 import type {
 	Facilitator,
@@ -129,6 +129,19 @@ export interface CreateX402HandlerParams {
 	 * is the backstop.
 	 */
 	readonly idempotency?: IdempotencyServerConfig;
+	/**
+	 * How many times to resend the identical `/settle` when the facilitator
+	 * answers `settlement_pending` (x402 v2 §9: broadcast, confirmation not yet
+	 * established — non-terminal). Default 1, as the x402 reference server does.
+	 *
+	 * Still pending after the resends: the client gets **402** with a
+	 * `PAYMENT-RESPONSE` header carrying `errorReason: "settlement_pending"` and
+	 * the transaction hash, so it can reconcile on chain — the payment may still
+	 * land, and paying again would pay twice. The idempotency lease is kept, so
+	 * a duplicate of that request is answered `payment_in_progress` instead of
+	 * settling again.
+	 */
+	readonly settlementPendingRetries?: number;
 }
 
 /** Server-side idempotency configuration (M5-1). See {@link CreateX402HandlerParams.idempotency}. */
@@ -172,16 +185,28 @@ function isSameRequirements(
 	);
 }
 
+/** x402 v2 §9 `settlement_pending`: broadcast, confirmation not yet established. Non-terminal. */
+function isPending(result: X402SettlementResponse): boolean {
+	return (
+		!result.success && result.errorReason === "settlement_pending" && result.transaction !== ""
+	);
+}
+
 async function paymentRequired(
 	request: Request,
 	requirements: readonly X402PaymentRequirements[],
 	resourceFor: ((r: Request) => Promise<X402ResourceInfo> | X402ResourceInfo) | undefined,
 	error: string,
+	settlement?: X402SettlementResponse,
 ): Promise<Response> {
 	const resource = resourceFor ? await resourceFor(request) : defaultResource(request);
 	const body = buildPaymentRequiredResponse({ resource, accepts: requirements, error });
 	const headers = new Headers({ "content-type": "application/json" });
 	headers.set(X402_HEADER_PAYMENT_REQUIRED, encodePaymentRequiredHeader(body));
+	// A failed or pending settlement travels back too (x402 v2 HTTP transport, failure example).
+	if (settlement !== undefined) {
+		headers.set(X402_HEADER_PAYMENT_RESPONSE, encodePaymentResponseHeader(settlement));
+	}
 	return new Response(JSON.stringify(body), { status: 402, headers });
 }
 
@@ -485,6 +510,7 @@ async function resolveInFlight(
  */
 export function createX402Handler(params: CreateX402HandlerParams): X402RequestHandler {
 	const { facilitator, requirementsFor, handler, resourceFor, hooks } = params;
+	const settlementPendingRetries = params.settlementPendingRetries ?? 1;
 	// Resolved ONCE so the in-memory store persists across requests (the Hono
 	// adapter rebuilds the handler per request, so this must live in the closure).
 	const idempotency = resolveIdempotency(params.idempotency);
@@ -495,6 +521,7 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 		const emitPaymentRequired = (
 			reqs: readonly X402PaymentRequirements[],
 			error: string,
+			settlement?: X402SettlementResponse,
 		): Promise<Response> => {
 			const event: PaymentRequiredEvent = {
 				kind: "payment_required",
@@ -504,7 +531,7 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 				acceptedNetworks: extractAcceptedNetworks(reqs),
 			};
 			invokeHookSafely(hooks?.onPaymentRequired, event);
-			return paymentRequired(request, reqs, resourceFor, error);
+			return paymentRequired(request, reqs, resourceFor, error, settlement);
 		};
 
 		// 1. Resolve requirements (or pass through)
@@ -589,20 +616,52 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 		}
 
 		// 6. Settle
+		const settleRequest = {
+			x402Version: X402_VERSION,
+			paymentPayload,
+			paymentRequirements: matchedRequirements,
+		} as const;
 		let settleResult: Awaited<ReturnType<Facilitator["settle"]>>;
 		try {
-			settleResult = await facilitator.settle({
-				x402Version: X402_VERSION,
-				paymentPayload,
-				paymentRequirements: matchedRequirements,
-			});
+			settleResult = await facilitator.settle(settleRequest);
 		} catch (cause) {
+			if (cause instanceof X402FacilitatorTimeoutError) {
+				// Outcome unknown: the payment may still land. Keep the lease so a duplicate is told
+				// "in progress" rather than settling — and being refused — a second time.
+				return internalError("facilitator_settle_timeout", cause);
+			}
 			await releaseLease(idempotency, idemKey, lease);
 			return internalError("facilitator_settle_failed", cause);
 		}
+		// 6b. Pending (x402 v2 §9): broadcast, not yet confirmed. Resend the identical request —
+		// fund-safe, the authorization's nonce is spent once on chain.
+		// Only a success replaces a pending answer: a later failure (say, the nonce is already
+		// spent — because the pending transaction just confirmed) does not prove the broadcast
+		// transaction failed, and reporting it as failed would invite the payer to pay again.
+		for (let resend = 0; resend < settlementPendingRetries && isPending(settleResult); resend++) {
+			let next: X402SettlementResponse;
+			try {
+				next = await facilitator.settle(settleRequest);
+			} catch {
+				break;
+			}
+			if (next.success || isPending(next)) {
+				settleResult = next;
+			} else {
+				break;
+			}
+		}
 		if (!settleResult.success) {
+			if (isPending(settleResult)) {
+				// The lease stays: the payment may still land, so a duplicate must not settle again.
+				return emitPaymentRequired(requirements, "settlement_pending", settleResult);
+			}
 			await releaseLease(idempotency, idemKey, lease);
-			return emitPaymentRequired(requirements, settleResult.errorReason ?? "settle failed");
+			return emitPaymentRequired(
+				requirements,
+				settleResult.errorReason ?? "settle failed",
+				settleResult,
+			);
 		}
 
 		// 7. Settled — emit onPaymentAccepted then invoke inner handler.

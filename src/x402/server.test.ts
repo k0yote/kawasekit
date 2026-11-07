@@ -8,6 +8,7 @@ import {
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./encoding";
+import { X402FacilitatorTimeoutError } from "./errors";
 import { createX402Handler, type X402HandlerContext } from "./server";
 import type {
 	Facilitator,
@@ -456,5 +457,168 @@ describe("createX402Handler — facilitator integration", () => {
 			paymentPayload: payload,
 			paymentRequirements: cheap,
 		});
+	});
+});
+
+// #53: `settlement_pending` (x402 v2 §9) is non-terminal — the transaction was broadcast and may
+// still confirm. The handler resends the identical /settle (as the reference server does), and if
+// it is still pending answers 402 with PAYMENT-RESPONSE carrying the pending transaction, so the
+// client can reconcile on chain instead of paying again.
+describe("createX402Handler — settlement_pending (#53)", () => {
+	const PENDING: X402SettleResponse = {
+		success: false,
+		errorReason: "settlement_pending",
+		transaction: `0x${"77".repeat(32)}`,
+		network: REQS.network,
+	};
+	const paid = () =>
+		new Request("https://api.example.com/weather", {
+			headers: { [X402_HEADER_PAYMENT_SIGNATURE]: encodePaymentSignatureHeader(PAYLOAD) },
+		});
+
+	it("resends the identical settle once; a confirmed resend serves the resource", async () => {
+		const settle = vi.fn<Facilitator["settle"]>();
+		settle.mockResolvedValueOnce(PENDING).mockResolvedValueOnce(SETTLEMENT_OK);
+		const inner = vi.fn(async () => jsonResponse({ weather: "sunny" }));
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: inner,
+		});
+		const response = await handler(paid());
+		expect(response.status).toBe(200);
+		expect(inner).toHaveBeenCalledTimes(1);
+		expect(settle).toHaveBeenCalledTimes(2);
+		expect(settle.mock.calls[1]).toEqual(settle.mock.calls[0]);
+	});
+
+	it("still pending → 402 with PAYMENT-RESPONSE carrying settlement_pending and the transaction", async () => {
+		const settle = vi.fn<Facilitator["settle"]>(async () => PENDING);
+		const inner = vi.fn(async () => jsonResponse({ never: "reached" }));
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: inner,
+		});
+		const response = await handler(paid());
+		expect(response.status).toBe(402);
+		expect(inner).not.toHaveBeenCalled();
+		expect(settle).toHaveBeenCalledTimes(2);
+		const header = response.headers.get(X402_HEADER_PAYMENT_RESPONSE);
+		expect(header).not.toBeNull();
+		expect(decodePaymentResponseHeader(header ?? "")).toEqual(PENDING);
+		const required = decodePaymentRequiredHeader(
+			response.headers.get(X402_HEADER_PAYMENT_REQUIRED) ?? "",
+		);
+		expect(required.error).toBe("settlement_pending");
+	});
+
+	it("settlementPendingRetries sets how many resends; 0 sends once", async () => {
+		for (const [retries, calls] of [
+			[0, 1],
+			[3, 4],
+		] as const) {
+			const settle = vi.fn<Facilitator["settle"]>(async () => PENDING);
+			const handler = createX402Handler({
+				facilitator: stubFacilitator({ settle }),
+				requirementsFor: () => [REQS],
+				handler: async () => jsonResponse({}),
+				settlementPendingRetries: retries,
+			});
+			expect((await handler(paid())).status).toBe(402);
+			expect(settle).toHaveBeenCalledTimes(calls);
+		}
+	});
+
+	it("a resend that throws still answers with the pending transaction (not a 500 that loses it)", async () => {
+		const settle = vi.fn<Facilitator["settle"]>();
+		settle.mockResolvedValueOnce(PENDING).mockRejectedValueOnce(new Error("facilitator down"));
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({}),
+		});
+		const response = await handler(paid());
+		expect(response.status).toBe(402);
+		expect(
+			decodePaymentResponseHeader(response.headers.get(X402_HEADER_PAYMENT_RESPONSE) ?? ""),
+		).toEqual(PENDING);
+	});
+
+	it("a pending payment keeps its idempotency lease: a duplicate does not settle again", async () => {
+		const settle = vi.fn<Facilitator["settle"]>(async () => PENDING);
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({}),
+			settlementPendingRetries: 0,
+		});
+		expect((await handler(paid())).status).toBe(402);
+		const duplicate = await handler(paid());
+		expect(duplicate.status).toBe(402);
+		expect(settle).toHaveBeenCalledTimes(1);
+		const required = decodePaymentRequiredHeader(
+			duplicate.headers.get(X402_HEADER_PAYMENT_REQUIRED) ?? "",
+		);
+		expect(required.error).toBe("payment_in_progress");
+	});
+
+	it("after a pending answer, a resend that fails keeps reporting pending — the failure does not prove the broadcast failed", async () => {
+		const settle = vi.fn<Facilitator["settle"]>();
+		settle.mockResolvedValueOnce(PENDING).mockResolvedValueOnce({
+			success: false,
+			errorReason: "invalid_transaction_state",
+			transaction: "",
+			network: REQS.network,
+		});
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({}),
+		});
+		const response = await handler(paid());
+		expect(response.status).toBe(402);
+		expect(
+			decodePaymentResponseHeader(response.headers.get(X402_HEADER_PAYMENT_RESPONSE) ?? ""),
+		).toEqual(PENDING);
+	});
+
+	it("a settle whose outcome is unknown (timeout) answers 500 facilitator_settle_timeout and keeps the lease", async () => {
+		const settle = vi.fn<Facilitator["settle"]>(async () => {
+			throw new X402FacilitatorTimeoutError("settle", 50);
+		});
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({}),
+		});
+		const first = await handler(paid());
+		expect(first.status).toBe(500);
+		expect(((await first.json()) as { error: string }).error).toBe("facilitator_settle_timeout");
+		const duplicate = await handler(paid());
+		expect(settle).toHaveBeenCalledTimes(1);
+		const required = decodePaymentRequiredHeader(
+			duplicate.headers.get(X402_HEADER_PAYMENT_REQUIRED) ?? "",
+		);
+		expect(required.error).toBe("payment_in_progress");
+	});
+
+	it("any other settle failure also carries PAYMENT-RESPONSE (x402 v2 HTTP transport, failure example)", async () => {
+		const failed: X402SettleResponse = {
+			success: false,
+			errorReason: "invalid_transaction_state",
+			transaction: "",
+			network: REQS.network,
+		};
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle: async () => failed }),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({}),
+		});
+		const response = await handler(paid());
+		expect(response.status).toBe(402);
+		expect(
+			decodePaymentResponseHeader(response.headers.get(X402_HEADER_PAYMENT_RESPONSE) ?? ""),
+		).toEqual(failed);
 	});
 });

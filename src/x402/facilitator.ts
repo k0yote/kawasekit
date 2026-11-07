@@ -739,16 +739,22 @@ export interface CreateHttpFacilitatorParams {
 	 */
 	readonly fetch?: typeof fetch;
 	/**
-	 * Resend `/verify` and `/settle` with the SAME body when the facilitator
-	 * could not take the request: HTTP 502 / 503 / 504, a network error, or a
-	 * `timeoutMs` timeout. `Retry-After` (seconds or an HTTP date) is honoured;
-	 * otherwise the wait starts at `initialDelayMs` and doubles. No attempt is
-	 * started whose wait would overrun `budgetMs`.
+	 * Resend a request with the SAME body when the facilitator could not take
+	 * it. `Retry-After` (seconds or an HTTP date) is honoured; otherwise the wait
+	 * starts at `initialDelayMs` and doubles. No attempt is started whose wait
+	 * would overrun `budgetMs`.
 	 *
-	 * Resending is fund-safe: the body carries the same signed authorization,
-	 * and EIP-3009 spends its nonce once on chain, so a resend can never charge
-	 * twice. Other statuses (4xx, 500) are not retried — they are answers, not
-	 * an unavailable facilitator.
+	 * - `/verify` (moves no funds) is resent after HTTP 502 / 503 / 504, a
+	 *   network error, or a `timeoutMs` timeout.
+	 * - `/settle` is resent **only after a 503** — the facilitator saying it did
+	 *   not take the request. After a 502 / 504, a dropped connection or a
+	 *   timeout the first attempt may already have broadcast; a resend could then
+	 *   answer "authorization already used" and turn a payment that is landing
+	 *   into a reported failure. Those throw instead, and the outcome is unknown.
+	 *
+	 * Resending can never charge twice: the body carries the same signed
+	 * authorization, and EIP-3009 spends its nonce once on chain. Other statuses
+	 * (4xx, 500) are answers, not an unavailable facilitator, and are not resent.
 	 *
 	 * On by default (`{ maxAttempts: 3, budgetMs: 10_000, initialDelayMs: 500 }`);
 	 * `false` sends each request once.
@@ -790,10 +796,19 @@ function parseRetryAfter(value: string | null, nowMs: number): number | undefine
 	return Number.isNaN(at) ? undefined : Math.max(0, at - nowMs);
 }
 
-/** One attempt's outcome: an answer to return or throw, or a failure worth resending. */
+/**
+ * One attempt's outcome: an answer to return or throw, or a failure worth resending. `mayHaveActed`
+ * is true when the facilitator may have acted on the request (a 502 / 504, a dropped connection, a
+ * timeout) — such a `/settle` is never resent.
+ */
 type AttemptResult =
 	| { readonly kind: "answer"; readonly response: Response; readonly text: string }
-	| { readonly kind: "retryable"; readonly error: Error; readonly retryAfterMs?: number };
+	| {
+			readonly kind: "retryable";
+			readonly error: Error;
+			readonly mayHaveActed: boolean;
+			readonly retryAfterMs?: number;
+	  };
 
 /**
  * Builds a facilitator that proxies all RPC over HTTP to a remote endpoint,
@@ -843,6 +858,9 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 				const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"), Date.now());
 				return {
 					kind: "retryable",
+					// 503: the facilitator itself declined to take the request. 502 / 504 come from
+					// something in front of it, after the request may have reached it.
+					mayHaveActed: response.status !== 503,
 					error: new Error(
 						`Facilitator ${endpoint} failed (status ${response.status}): ${text.slice(0, 200)}`,
 					),
@@ -854,12 +872,15 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 			if (controller?.signal.aborted === true && timeoutMs !== undefined) {
 				return {
 					kind: "retryable",
+					mayHaveActed: true,
 					error: new X402FacilitatorTimeoutError(endpoint, timeoutMs, { cause }),
 				};
 			}
-			// The request never produced a response: a dropped connection, DNS, a refused socket.
+			// The request never produced a response: a refused socket or DNS (not sent), or a
+			// connection dropped after sending (sent). The two are indistinguishable here.
 			return {
 				kind: "retryable",
+				mayHaveActed: true,
 				error: cause instanceof Error ? cause : new Error(String(cause)),
 			};
 		} finally {
@@ -875,6 +896,8 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 		let result = await attempt(endpoint, serialized);
 		for (let attempts = 1; result.kind === "retryable"; attempts++) {
 			if (retry === null || attempts >= retry.maxAttempts) throw result.error;
+			// A settle the facilitator may have acted on is never resent (see `retry`).
+			if (endpoint === "settle" && result.mayHaveActed) throw result.error;
 			const waitMs = result.retryAfterMs ?? delayMs;
 			if (Date.now() - startedAt + waitMs > retry.budgetMs) throw result.error;
 			await new Promise((resolve) => setTimeout(resolve, waitMs));

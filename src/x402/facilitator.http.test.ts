@@ -263,9 +263,11 @@ const unavailable =
 		res.end(JSON.stringify({ error: "unavailable" }));
 	};
 
-// #53: a facilitator that could not take the request (503, or a gateway in front of it answering
-// 502/504, or the connection dropping) is retried with the SAME body. Resending the same
-// authorization cannot charge twice — EIP-3009 consumes its nonce once on chain.
+// #53: a facilitator that could not take the request is retried with the SAME body. Resending the
+// same authorization cannot charge twice — EIP-3009 consumes its nonce once on chain. But /settle is
+// resent ONLY on 503 (the facilitator says it did not take the request): after a 502/504, a dropped
+// connection or a timeout the first attempt may have broadcast, and a resend that then answers
+// "nonce already used" would be reported as a failed payment that is in fact landing.
 describe("createHttpFacilitator — retry on 502/503/504 and network errors (#53)", () => {
 	it("retries /settle after a 503 with the identical body, and returns the eventual answer", async () => {
 		const f = flaky(2, unavailable("0"), SETTLED);
@@ -278,7 +280,7 @@ describe("createHttpFacilitator — retry on 502/503/504 and network errors (#53
 		expect(new Set(f.bodies).size).toBe(1);
 	});
 
-	it("retries /verify too, and on 502 and 504", async () => {
+	it("retries /verify on 502 and 504 (verify moves no funds)", async () => {
 		for (const status of [502, 504]) {
 			const f = flaky(
 				1,
@@ -366,7 +368,26 @@ describe("createHttpFacilitator — retry on 502/503/504 and network errors (#53
 		expect(f.bodies).toHaveLength(1);
 	});
 
-	it("retries a network error (the connection dropped)", async () => {
+	it("does not resend /settle after a 502 or 504 — the first attempt may have broadcast", async () => {
+		for (const status of [502, 504]) {
+			const f = flaky(
+				1,
+				(res) => {
+					res.statusCode = status;
+					res.end("");
+				},
+				SETTLED,
+			);
+			await withHttpListener(f.handler, async (baseUrl) => {
+				await expect(
+					createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } }).settle(SETTLE_REQ),
+				).rejects.toThrow(String(status));
+			});
+			expect(f.bodies).toHaveLength(1);
+		}
+	});
+
+	it("does not resend /settle after a network error", async () => {
 		let calls = 0;
 		const fetchImpl: typeof fetch = async (input, init) => {
 			calls++;
@@ -380,7 +401,26 @@ describe("createHttpFacilitator — retry on 502/503/504 and network errors (#53
 				fetch: fetchImpl,
 				retry: { initialDelayMs: 1 },
 			});
-			expect((await facilitator.settle(SETTLE_REQ)).success).toBe(true);
+			await expect(facilitator.settle(SETTLE_REQ)).rejects.toThrow(/fetch failed/);
+		});
+		expect(calls).toBe(1);
+	});
+
+	it("retries /verify after a network error (the connection dropped)", async () => {
+		let calls = 0;
+		const fetchImpl: typeof fetch = async (input, init) => {
+			calls++;
+			if (calls === 1) throw new TypeError("fetch failed");
+			return fetch(input, init);
+		};
+		const f = flaky(0, unavailable(), { isValid: true } satisfies X402VerifyResponse);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({
+				baseUrl,
+				fetch: fetchImpl,
+				retry: { initialDelayMs: 1 },
+			});
+			expect((await facilitator.verify(SETTLE_REQ)).isValid).toBe(true);
 		});
 		expect(calls).toBe(2);
 	});
@@ -404,7 +444,27 @@ describe("createHttpFacilitator — timeoutMs (#53)", () => {
 		});
 	});
 
-	it("a timed-out attempt is retried within the budget, then reported as a timeout", async () => {
+	it("a timed-out /settle is not resent, even with retry on", async () => {
+		let calls = 0;
+		await withHttpListener(
+			() => {
+				calls++;
+			},
+			async (baseUrl) => {
+				const facilitator = createHttpFacilitator({
+					baseUrl,
+					timeoutMs: 50,
+					retry: { initialDelayMs: 1 },
+				});
+				await expect(facilitator.settle(SETTLE_REQ)).rejects.toBeInstanceOf(
+					X402FacilitatorTimeoutError,
+				);
+			},
+		);
+		expect(calls).toBe(1);
+	});
+
+	it("a timed-out /verify is retried within the budget, then reported as a timeout", async () => {
 		let calls = 0;
 		await withHttpListener(
 			() => {
