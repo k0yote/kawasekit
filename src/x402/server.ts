@@ -23,7 +23,7 @@
  */
 
 import type { Hex } from "viem";
-import { getAddress } from "viem";
+import { getAddress, isAddress } from "viem";
 import {
 	createInMemoryIdempotencyStore,
 	type IdempotencyLease,
@@ -305,7 +305,7 @@ function base64ToBytes(b64: string): Uint8Array {
 /** Defensively read the EIP-3009 nonce + validBefore from an opaque payload. */
 function readAuthorization(
 	payload: X402PaymentPayload,
-): { readonly nonce: string; readonly validBefore: bigint } | null {
+): { readonly nonce: string; readonly validBefore: bigint; readonly from?: string } | null {
 	const inner = payload.payload;
 	if (typeof inner !== "object" || inner === null) {
 		return null;
@@ -314,7 +314,7 @@ function readAuthorization(
 	if (typeof auth !== "object" || auth === null) {
 		return null;
 	}
-	const a = auth as { nonce?: unknown; validBefore?: unknown };
+	const a = auth as { nonce?: unknown; validBefore?: unknown; from?: unknown };
 	if (typeof a.nonce !== "string" || a.nonce === "") {
 		return null;
 	}
@@ -322,34 +322,39 @@ function readAuthorization(
 		typeof a.validBefore === "string" && /^[0-9]+$/.test(a.validBefore)
 			? BigInt(a.validBefore)
 			: 0n;
-	return { nonce: a.nonce, validBefore };
+	return typeof a.from === "string" && isAddress(a.from)
+		? { nonce: a.nonce, validBefore, from: getAddress(a.from) }
+		: { nonce: a.nonce, validBefore };
 }
 
 /**
  * The server dedup key: the client `Idempotency-Key` header when present (the
  * logical reasoning-step key, working even for signers that cannot derive a
- * nonce), else the EIP-3009 nonce — both namespaced by (network, payTo, asset)
- * for cross-tenant isolation. `null` ⇒ no key can be formed; dedup is skipped
- * (the on-chain nonce still backstops fund-correctness).
+ * nonce), else the EIP-3009 nonce — namespaced by (network, payTo, asset) for
+ * cross-tenant isolation, and bound to the payer (the verified authorization's
+ * `from`) and the resource (method + path + query): a replay hands back an
+ * earlier paid response without settling, so it must only ever go to the payer
+ * who paid for that resource. Without a payer no key is formed. `null` ⇒ dedup
+ * is skipped (the on-chain nonce still backstops fund-correctness).
  */
 function computeServerKey(
 	request: Request,
 	requirements: X402PaymentRequirements,
-	auth: { readonly nonce: string } | null,
+	auth: { readonly nonce: string; readonly from?: string } | null,
 ): string | null {
-	const header = request.headers.get(X402_HEADER_IDEMPOTENCY_KEY);
-	let material: string;
-	if (header !== null && header !== "") {
-		material = `hdr:${header}`;
-	} else if (auth !== null) {
-		material = `nonce:${auth.nonce}`;
-	} else {
+	if (auth?.from === undefined) {
 		return null;
 	}
+	const header = request.headers.get(X402_HEADER_IDEMPOTENCY_KEY);
+	const material = header !== null && header !== "" ? `hdr:${header}` : `nonce:${auth.nonce}`;
+	const url = new URL(request.url);
 	return JSON.stringify([
 		requirements.network,
 		getAddress(requirements.payTo),
 		getAddress(requirements.asset),
+		auth.from,
+		request.method,
+		`${url.pathname}${url.search}`,
 		material,
 	]);
 }

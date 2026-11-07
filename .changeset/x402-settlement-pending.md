@@ -52,6 +52,12 @@ a new authorization — so the first transaction and the new one could both sett
 - 500 bodies are now `{ error }` only: the thrown `message` is no longer sent to the client (it could
   quote an RPC URL, and an RPC URL can carry an API key).
 
+- **Security fix:** an idempotency replay is now bound to the payer (the verified authorization's
+  `from`) and the resource (method + path + query). Since the idempotency layer shipped, another payer
+  who sent the same `Idempotency-Key` — or copied a public nonce into their own authorization —
+  passed verify and was handed the earlier paid response without their payment settling. A payload
+  without a readable payer is no longer deduplicated (the on-chain nonce still backstops funds).
+
 **`x402Middleware` (Hono)**
 
 - Passes every handler option through (`hooks`, `idempotency` and `settlementPendingRetries` were
