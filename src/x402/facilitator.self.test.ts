@@ -6,6 +6,7 @@
 
 import type { Account, Address, Chain, PublicClient, Transport, WalletClient } from "viem";
 import {
+	concat,
 	createPublicClient,
 	createWalletClient,
 	encodeFunctionData,
@@ -397,6 +398,56 @@ describe("createSelfFacilitator — verify rejection paths", () => {
 		});
 		expect(result.isValid).toBe(false);
 		expect(result.invalidReason).toBe("invalid_exact_evm_payload_signature");
+	});
+
+	it("refuses a smart account's (non-65-byte) signature: EOA signatures only (#54)", async () => {
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+		});
+		const requirements = buildJpycRequirements(parseUnits("10", JPYC_DECIMALS));
+		const value = parseUnits("10", JPYC_DECIMALS);
+		const validBefore = authorizationDeadlineFromNow(300);
+		const nonce = generateAuthorizationNonce();
+		const signed = await signTransferWithAuthorization(
+			alice,
+			{
+				name: MOCK_NAME,
+				version: MOCK_VERSION,
+				chainId: POLYGON_AMOY_CHAIN_ID,
+				verifyingContract: requirements.asset,
+			},
+			{ from: alice.address, to: requirements.payTo, value, validAfter: 0n, validBefore, nonce },
+		);
+		// Kernel v3.1's shape: 0x01, the validator's address, a 65-byte signature (86 bytes).
+		const kernelShaped = concat([
+			"0x01",
+			"0x3333333333333333333333333333333333333333",
+			signed.signature,
+		]);
+		const result = await facilitator.verify({
+			x402Version: 2,
+			paymentPayload: {
+				x402Version: 2,
+				accepted: requirements,
+				payload: {
+					signature: kernelShaped,
+					authorization: {
+						from: alice.address,
+						to: requirements.payTo,
+						value: value.toString(),
+						validAfter: "0",
+						validBefore: validBefore.toString(),
+						nonce,
+					},
+				},
+			},
+			paymentRequirements: requirements,
+		});
+		expect(result.isValid).toBe(false);
+		expect(result.invalidReason).toBe("invalid_exact_evm_payload_signature");
+		expect(result.invalidMessage).toMatch(/65-byte/);
 	});
 
 	it("rejects when balance is insufficient", async () => {

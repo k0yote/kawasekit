@@ -1,6 +1,6 @@
-import type { Address } from "viem";
-import { getAddress, recoverTypedDataAddress } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import type { Address, Hex } from "viem";
+import { concat, getAddress, recoverTypedDataAddress, serializeErc6492Signature } from "viem";
+import { privateKeyToAccount, toAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import { JPYC_V2_ADDRESS } from "../tokens/jpyc";
 import { createX402PaymentSigner, X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS } from "./client";
@@ -608,5 +608,118 @@ describe("createX402PaymentSigner — maxAmountPerSign (threat 1.14)", () => {
 				}),
 			).toThrow(X402InvalidPayloadError);
 		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// A deployed smart account as the payer (ERC-1271, #54)
+// ---------------------------------------------------------------------------
+
+// Kernel v3.1's typed-data signature: 0x01, the ECDSA validator's address, a 65-byte signature.
+const SMART_ACCOUNT = getAddress("0x2222222222222222222222222222222222222222");
+const KERNEL_SIGNATURE: Hex = concat([
+	"0x01",
+	"0x3333333333333333333333333333333333333333",
+	`0x${"ab".repeat(64)}1b`,
+]);
+// An undeployed account's signature, which viem / ZeroDev wrap as ERC-6492.
+const UNDEPLOYED_SIGNATURE: Hex = serializeErc6492Signature({
+	address: "0x6666666666666666666666666666666666666666",
+	data: "0xdeadbeef",
+	signature: KERNEL_SIGNATURE,
+});
+
+function smartAccount(signature: Hex) {
+	return toAccount({
+		address: SMART_ACCOUNT,
+		async signMessage() {
+			throw new Error("unused");
+		},
+		async signTransaction() {
+			throw new Error("unused");
+		},
+		async signTypedData() {
+			return signature;
+		},
+	});
+}
+
+// A token that checks ERC-1271 in transferWithAuthorization (USDC v2.2-like), pinned by the caller.
+const USDC_LIKE = getAddress("0x4444444444444444444444444444444444444444");
+const USDC_ASSET = {
+	kind: "unsafeOverride",
+	domain: { name: "USDC", version: "2", verifyingContract: USDC_LIKE },
+} as const;
+const USDC_REQ: X402PaymentRequirements = {
+	scheme: "exact",
+	network: "eip155:80002",
+	amount: "1000000",
+	asset: USDC_LIKE,
+	payTo: PAY_TO,
+	maxTimeoutSeconds: 60,
+	extra: { assetTransferMethod: "eip3009", name: "USDC", version: "2" },
+};
+
+describe("createX402PaymentSigner — a deployed smart account pays (ERC-1271, #54)", () => {
+	it("carries the smart account's signature whole on a token that checks ERC-1271", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account: smartAccount(KERNEL_SIGNATURE),
+			asset: USDC_ASSET,
+		});
+		const payload = await signer.sign({ paymentRequirements: USDC_REQ });
+		const exact = payload.payload as { signature: Hex; authorization: { from: Address } };
+		expect(exact.signature).toBe(KERNEL_SIGNATURE);
+		expect(getAddress(exact.authorization.from)).toBe(SMART_ACCOUNT);
+	});
+
+	it("refuses before sending when the asset is JPYC (ecrecover only)", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account: smartAccount(KERNEL_SIGNATURE),
+			asset: { kind: "known", id: "jpyc-v2" },
+		});
+		const attempt = signer.sign({ paymentRequirements: JPYC_REQ });
+		await expect(attempt).rejects.toBeInstanceOf(X402InvalidPayloadError);
+		await expect(attempt).rejects.toThrow(/ecrecover/);
+		await expect(attempt).rejects.toThrow(/transferJpyc/);
+	});
+
+	it("refuses JPYC pinned through unsafeOverride too (decided by address)", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account: smartAccount(KERNEL_SIGNATURE),
+			asset: {
+				kind: "unsafeOverride",
+				domain: { name: "JPY Coin", version: "1", verifyingContract: JPYC_V2_ADDRESS },
+			},
+		});
+		await expect(signer.sign({ paymentRequirements: JPYC_REQ })).rejects.toThrow(/ecrecover/);
+	});
+
+	it("sends an undeployed account's ERC-6492 signature as it is: the facilitator may deploy it", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account: smartAccount(UNDEPLOYED_SIGNATURE),
+			asset: USDC_ASSET,
+		});
+		const payload = await signer.sign({ paymentRequirements: USDC_REQ });
+		expect((payload.payload as { signature: Hex }).signature).toBe(UNDEPLOYED_SIGNATURE);
+	});
+
+	it("refuses an undeployed account's ERC-6492 signature on JPYC (ecrecover only)", async () => {
+		const signer = createX402PaymentSigner({
+			network: "testnet",
+			account: smartAccount(UNDEPLOYED_SIGNATURE),
+			asset: { kind: "known", id: "jpyc-v2" },
+		});
+		await expect(signer.sign({ paymentRequirements: JPYC_REQ })).rejects.toThrow(/ecrecover/);
+	});
+
+	it("leaves an EOA on the same token as it was", async () => {
+		const signer = createX402PaymentSigner({ network: "testnet", account, asset: USDC_ASSET });
+		const payload = await signer.sign({ paymentRequirements: USDC_REQ });
+		const exact = payload.payload as { signature: Hex };
+		expect(exact.signature).toMatch(/^0x[0-9a-fA-F]{130}$/);
 	});
 });

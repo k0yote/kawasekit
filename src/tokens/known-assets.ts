@@ -72,3 +72,24 @@ export function getKnownAssetDomain(id: KnownAssetId): KnownAssetDomain | undefi
 export function listKnownAssetIds(): readonly KnownAssetId[] {
 	return KNOWN_ASSETS.map((entry) => entry.id);
 }
+
+/**
+ * Known assets whose `transferWithAuthorization` checks the signature with `ecrecover` alone — no
+ * ERC-1271 — so `from` must be an EOA: a smart account's signature can never settle there.
+ *
+ * JPYC v2: its EIP-3009 implementation recovers with `ecrecover` and compares to `from` (see the
+ * JPYC facts in the repository's CLAUDE.md). USDC v2.2 is the counter-example: it checks ERC-1271
+ * when `from` has code.
+ */
+const ECRECOVER_ONLY_ASSETS: ReadonlySet<Address> = new Set([getAddress(JPYC_V2_ADDRESS)]);
+
+/**
+ * Whether a token at `verifyingContract` is known to check EIP-3009 signatures with `ecrecover`
+ * only. `false` means "not known to be", not "checks ERC-1271": an asset kawasekit does not know
+ * is left to the facilitator. Decided by address, so JPYC pinned through `unsafeOverride` counts.
+ *
+ * @internal Not exported from the package root.
+ */
+export function isEcrecoverOnlyAsset(verifyingContract: Address): boolean {
+	return ECRECOVER_ONLY_ASSETS.has(getAddress(verifyingContract));
+}

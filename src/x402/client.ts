@@ -9,15 +9,28 @@
  *
  * Scope:
  * - **exact-EVM scheme only.** Permit2 / ERC-7710 are M4+.
- * - **EOA payer only.** EIP-3009 uses pure `ecrecover` (no ERC-1271 fallback)
- *   so smart accounts cannot be `from`. The agent-account flow is
- *   {@link transferJpyc} (UserOp), not x402.
+ * - **Payer: an EOA, or a deployed smart account on a token that checks
+ *   ERC-1271.** JPYC checks with `ecrecover` only, so a JPYC payer must be an
+ *   EOA — a smart account pays JPYC with {@link transferJpyc} (UserOp), not
+ *   x402. A token that also checks ERC-1271 (USDC v2.2) takes a deployed smart
+ *   account's signature, whole, through its `bytes signature` overload, when the
+ *   facilitator settles through that overload. A smart account's signature on
+ *   JPYC is refused before anything is sent.
+ * - **An undeployed smart account.** Its signature comes wrapped as ERC-6492 and
+ *   is sent as it is. It settles only if the facilitator deploys the account
+ *   first (the x402 reference facilitators do, for a factory listed in their
+ *   `eip6492AllowedFactories` — off by default); otherwise deploy the account
+ *   before paying.
+ * - **What a smart account's owner sees.** The owner's key signs the account's
+ *   own wrapper of the hash (for Kernel v3.1, `Kernel(bytes32 hash)`), so a
+ *   browser wallet that owns the account shows an opaque hash — neither the
+ *   payee nor the amount.
  *
  * @packageDocumentation
  */
 
-import type { Account, Address } from "viem";
-import { getAddress, isAddress } from "viem";
+import type { Account, Address, Hex } from "viem";
+import { getAddress, isAddress, size } from "viem";
 import { getChain, isSupportedChainId } from "../chains";
 import { assertNonBypassable } from "../signer/gate";
 import type { NonBypassableEnforcement, PaymentIntent, PolicyGatedSigner } from "../signer/types";
@@ -29,6 +42,7 @@ import {
 	generateAuthorizationNonce,
 	signTransferWithAuthorization,
 } from "../tokens/eip3009";
+import { isEcrecoverOnlyAsset } from "../tokens/known-assets";
 import { X402InvalidPayloadError, X402PolicyRejectedError } from "./errors";
 import type {
 	X402ExactEvmPayload,
@@ -61,7 +75,7 @@ export const X402_DEFAULT_AUTHORIZATION_LIFETIME_SECONDS = 300;
 export type { X402AssetParam, X402TokenDomain };
 
 /**
- * Parameters for the `account` (EOA) variant of {@link createX402PaymentSigner}.
+ * Parameters for the `account` variant of {@link createX402PaymentSigner}.
  *
  * Kept as a named, extensible `interface` (consumers may `extends` /
  * declaration-merge it). `maxAmountPerSign` pins the per-sign ceiling; for richer
@@ -78,8 +92,9 @@ export interface CreateX402PaymentSignerAccountParams {
 	 */
 	readonly network: "mainnet" | "testnet";
 	/**
-	 * EOA / LocalAccount that signs the EIP-3009 `TransferWithAuthorization`.
-	 * MUST be the same address the requirements' `from` will name.
+	 * Account that signs the EIP-3009 `TransferWithAuthorization`; its address is
+	 * the authorization's `from`. An EOA, or a deployed smart account when the
+	 * asset checks ERC-1271 (not JPYC — see the module's scope).
 	 */
 	readonly account: Account;
 	/**
@@ -187,7 +202,7 @@ export interface SignX402PaymentParams {
 
 /** Signer returned by {@link createX402PaymentSigner}. */
 export interface X402PaymentSigner {
-	/** Address of the EOA bound to this signer. */
+	/** Address of the payer bound to this signer (the authorization's `from`). */
 	readonly address: Address;
 	/** Sign a payment for one {@link X402PaymentRequirements}. */
 	sign(params: SignX402PaymentParams): Promise<X402PaymentPayload>;
@@ -261,6 +276,28 @@ function validateRequirements(requirements: X402PaymentRequirements): {
 	const asset = assertAddress(requirements.asset, "asset");
 	const payTo = assertAddress(requirements.payTo, "payTo");
 	return { chainId, value, asset, payTo };
+}
+
+/**
+ * Refuses a signature that can never settle, before it is sent: one that is not 65 bytes — a
+ * smart account's ERC-1271 signature, or its ERC-6492 wrapper — on an asset known to check with
+ * `ecrecover` only (JPYC). A 65-byte signature passes: an EOA's, or a smart account's that is
+ * shaped like one, which the facilitator judges. An asset kawasekit does not know is left to the
+ * facilitator, and so is an undeployed account (a facilitator may deploy it from the ERC-6492
+ * wrapper).
+ *
+ * Runs after signing — the signature's shape is what tells a smart account apart without an RPC.
+ * A `signer` that records spend when it signs has counted a payment refused here; the local
+ * signer in this package records nothing (spend is the caller's to record).
+ */
+function assertSettleableSignature(signature: Hex, asset: Address): void {
+	if (size(signature) === 65) return;
+	if (isEcrecoverOnlyAsset(asset)) {
+		throw new X402InvalidPayloadError(
+			"PaymentSignature",
+			`the signature is not a 65-byte EOA signature (a smart account's?), and ${getAddress(asset)} checks EIP-3009 signatures with ecrecover only (no ERC-1271) — a smart account cannot pay it through x402; transfer from the smart account with a UserOp (transferJpyc) instead`,
+		);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +413,8 @@ export function createX402PaymentSigner(params: CreateX402PaymentSignerParams): 
 					nonce,
 				},
 			);
+
+			assertSettleableSignature(signed.signature, pinnedDomain.verifyingContract);
 
 			const payload: X402ExactEvmPayload = {
 				signature: signed.signature,
@@ -493,6 +532,8 @@ function createSignerBackedX402PaymentSigner(
 			if (!signResult.ok) {
 				throw new X402PolicyRejectedError(signResult.rejection);
 			}
+
+			assertSettleableSignature(signResult.signature, pinnedDomain.verifyingContract);
 
 			const payload: X402ExactEvmPayload = {
 				signature: signResult.signature,
