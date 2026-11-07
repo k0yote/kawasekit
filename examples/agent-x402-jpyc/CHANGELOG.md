@@ -1,5 +1,12 @@
 # agent-x402-jpyc
 
+## 0.0.12
+
+### Patch Changes
+
+- Updated dependencies [c82cfa6]
+  - kawasekit@0.12.0
+
 ## 0.0.11
 
 ### Patch Changes
