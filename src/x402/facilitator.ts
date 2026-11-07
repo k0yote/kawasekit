@@ -24,7 +24,11 @@ import {
 	type VerifyEvent,
 } from "../observability/hooks";
 import { JPYC_EIP712_DOMAIN_HINT, JPYC_V2_ADDRESS, jpycAbi } from "../tokens/jpyc";
-import { X402FacilitatorTimeoutError, X402SettleOutcomeUnknownError } from "./errors";
+import {
+	X402FacilitatorTimeoutError,
+	X402InvalidConfigError,
+	X402SettleOutcomeUnknownError,
+} from "./errors";
 import type {
 	Facilitator,
 	X402PaymentRequirements,
@@ -174,6 +178,18 @@ function failVerify(
 		return { isValid: false, invalidReason: reason, payer };
 	}
 	return { isValid: false, invalidReason: reason };
+}
+
+/**
+ * A short description of a thrown value. viem errors carry `shortMessage`, which leaves out the
+ * request URL and body that their `message` includes — an RPC URL can carry an API key.
+ */
+function errorText(cause: unknown): string {
+	if (cause instanceof Error) {
+		const short = "shortMessage" in cause ? cause.shortMessage : undefined;
+		return typeof short === "string" && short !== "" ? short : cause.message;
+	}
+	return String(cause);
 }
 
 function failSettle(
@@ -554,11 +570,7 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 				signature: exact.signature,
 			});
 		} catch (cause) {
-			return failVerify(
-				"unexpected_verify_error",
-				cause instanceof Error ? cause.message : String(cause),
-				auth.from,
-			);
+			return failVerify("unexpected_verify_error", errorText(cause), auth.from);
 		}
 		if (getAddress(recovered) !== getAddress(auth.from)) {
 			return failVerify("invalid_exact_evm_payload_signature", undefined, auth.from);
@@ -587,11 +599,7 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 				return failVerify("insufficient_funds", undefined, auth.from);
 			}
 		} catch (cause) {
-			return failVerify(
-				"unexpected_verify_error",
-				cause instanceof Error ? cause.message : String(cause),
-				auth.from,
-			);
+			return failVerify("unexpected_verify_error", errorText(cause), auth.from);
 		}
 
 		return { isValid: true, payer: auth.from };
@@ -643,7 +651,7 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 			});
 		} catch (cause) {
 			return failSettle(req.paymentRequirements.network, "unexpected_settle_error", {
-				message: cause instanceof Error ? cause.message : String(cause),
+				message: errorText(cause),
 				payer: auth.from,
 			});
 		}
@@ -661,8 +669,10 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 				});
 			}
 		} catch (cause) {
-			return failSettle(req.paymentRequirements.network, "unexpected_settle_error", {
-				message: cause instanceof Error ? cause.message : String(cause),
+			// Broadcast, but the receipt did not arrive (timeout, RPC failure): not a failed payment
+			// — it may still land. x402 v2 §9 `settlement_pending`, with the transaction to reconcile.
+			return failSettle(req.paymentRequirements.network, "settlement_pending", {
+				message: errorText(cause),
 				payer: auth.from,
 				transaction: txHash,
 			});
@@ -746,17 +756,18 @@ export interface CreateHttpFacilitatorParams {
 	 *
 	 * - `/verify` (moves no funds) is resent after HTTP 502 / 503 / 504, a
 	 *   network error, or a `timeoutMs` timeout.
-	 * - `/settle` is resent **only after a 503** — the facilitator saying it did
-	 *   not take the request. After a 502 / 504, a dropped connection or a
-	 *   timeout the first attempt may already have broadcast; a resend could then
-	 *   answer "authorization already used" and turn a payment that is landing
-	 *   into a reported failure. Those throw {@link X402SettleOutcomeUnknownError}
-	 *   instead. A refused connection or an unresolved host sent nothing, and is
-	 *   resent.
+	 * - `/settle` is resent only after a 503 (the facilitator declining the
+	 *   request) or when nothing was sent (a refused connection, an unresolved
+	 *   host). After a 502 / 504, a dropped connection or a timeout the first
+	 *   attempt may already have broadcast, so it is not resent. And because a
+	 *   proxy can answer 503 after forwarding, a failure answered after a resend
+	 *   is not trusted as final either. Every such case throws
+	 *   {@link X402SettleOutcomeUnknownError}: the payment may still land.
 	 *
 	 * Resending can never charge twice: the body carries the same signed
 	 * authorization, and EIP-3009 spends its nonce once on chain. Other statuses
-	 * (4xx, 500) are answers, not an unavailable facilitator, and are not resent.
+	 * (4xx, 500) are not resent: a `/verify` one throws; a `/settle` one is the
+	 * answer if its body is a settle response, and an unknown outcome if not.
 	 *
 	 * On by default (`{ maxAttempts: 3, budgetMs: 10_000, initialDelayMs: 500 }`);
 	 * `false` sends each request once.
@@ -778,7 +789,10 @@ export interface CreateHttpFacilitatorParams {
 export interface X402FacilitatorRetryOptions {
 	/** Attempts per call, the first included. Default 3. */
 	readonly maxAttempts?: number;
-	/** Wall-clock budget for one call's waits, in milliseconds. Default 10_000. */
+	/**
+	 * Wall-clock budget for one call, attempts and waits included, in milliseconds: no resend is
+	 * started whose wait would end past it. Default 10_000.
+	 */
 	readonly budgetMs?: number;
 	/** Wait before the first resend when the facilitator sent no `Retry-After`. Default 500; doubles. */
 	readonly initialDelayMs?: number;
@@ -793,12 +807,49 @@ const RETRYABLE_STATUS = new Set([502, 503, 504]);
 /** Network error codes raised before a request is sent: the facilitator cannot have acted. */
 const NOT_SENT_CODES = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
 
+/** Whether a parsed body is an x402 v2 settle response: a boolean `success` and a string `transaction`. */
+function isSettleResponse(value: unknown): value is X402SettleResponse {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"success" in value &&
+		typeof value.success === "boolean" &&
+		"transaction" in value &&
+		typeof value.transaction === "string"
+	);
+}
+
 /** Whether a fetch rejection says the request never left (a refused socket, an unresolved host). */
 function wasNotSent(error: unknown): boolean {
 	const cause = error instanceof Error ? error.cause : undefined;
 	const code =
 		typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
 	return typeof code === "string" && NOT_SENT_CODES.has(code);
+}
+
+/** The retry options with defaults filled in; a value that is not a usable number is refused. */
+function resolveRetry(
+	options: X402FacilitatorRetryOptions | undefined,
+): Required<X402FacilitatorRetryOptions> {
+	const maxAttempts = options?.maxAttempts ?? DEFAULT_RETRY.maxAttempts;
+	const budgetMs = options?.budgetMs ?? DEFAULT_RETRY.budgetMs;
+	const initialDelayMs = options?.initialDelayMs ?? DEFAULT_RETRY.initialDelayMs;
+	if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+		throw new X402InvalidConfigError("retry.maxAttempts", "must be an integer of at least 1");
+	}
+	if (!Number.isFinite(budgetMs) || budgetMs < 0) {
+		throw new X402InvalidConfigError(
+			"retry.budgetMs",
+			"must be a finite number of milliseconds, 0 or more",
+		);
+	}
+	if (!Number.isFinite(initialDelayMs) || initialDelayMs < 0) {
+		throw new X402InvalidConfigError(
+			"retry.initialDelayMs",
+			"must be a finite number of milliseconds, 0 or more",
+		);
+	}
+	return { maxAttempts, budgetMs, initialDelayMs };
 }
 
 /** `Retry-After` as milliseconds: delta-seconds or an HTTP date; `undefined` when absent or unreadable. */
@@ -820,6 +871,8 @@ type AttemptResult =
 			readonly kind: "retryable";
 			readonly error: Error;
 			readonly mayHaveActed: boolean;
+			/** The request never left: a refused connection or an unresolved host. */
+			readonly notSent: boolean;
 			readonly retryAfterMs?: number;
 	  };
 
@@ -841,6 +894,8 @@ type AttemptResult =
  * const facilitator = createHttpFacilitator({
  *   baseUrl: process.env.X402_FACILITATOR_URL!, // e.g. Coinbase CDP endpoint
  *   getAuthHeaders: () => ({ Authorization: `Bearer ${apiKey}` }),
+ *   timeoutMs: 30_000, // optional; a settle that times out is an unknown outcome
+ *   retry: { maxAttempts: 3, budgetMs: 10_000 }, // the defaults; `false` sends once
  * });
  * ```
  */
@@ -848,8 +903,14 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 	const baseUrl = params.baseUrl.replace(/\/$/, "");
 	const fetchImpl = params.fetch ?? fetch;
 	const getAuthHeaders = params.getAuthHeaders;
-	const retry = params.retry === false ? null : { ...DEFAULT_RETRY, ...params.retry };
+	const retry = params.retry === false ? null : resolveRetry(params.retry);
 	const timeoutMs = params.timeoutMs;
+	if (timeoutMs !== undefined && !(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
+		throw new X402InvalidConfigError(
+			"timeoutMs",
+			"must be a finite number of milliseconds above 0",
+		);
+	}
 
 	async function attempt(endpoint: "verify" | "settle", body: string): Promise<AttemptResult> {
 		const headers: Record<string, string> = { "content-type": "application/json" };
@@ -874,6 +935,7 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 					// 503: the facilitator itself declined to take the request. 502 / 504 come from
 					// something in front of it, after the request may have reached it.
 					mayHaveActed: response.status !== 503,
+					notSent: false,
 					error: new Error(
 						`Facilitator ${endpoint} failed (status ${response.status}): ${text.slice(0, 200)}`,
 					),
@@ -886,14 +948,17 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 				return {
 					kind: "retryable",
 					mayHaveActed: true,
+					notSent: false,
 					error: new X402FacilitatorTimeoutError(endpoint, timeoutMs, { cause }),
 				};
 			}
 			// No response: a refused socket or an unresolved host never sent anything; any other
 			// network error (a connection dropped after sending) may have reached the facilitator.
+			const notSent = wasNotSent(cause);
 			return {
 				kind: "retryable",
-				mayHaveActed: !wasNotSent(cause),
+				mayHaveActed: !notSent,
+				notSent,
 				error: cause instanceof Error ? cause : new Error(String(cause)),
 			};
 		} finally {
@@ -901,58 +966,98 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 		}
 	}
 
-	async function post<TResponse>(endpoint: "verify" | "settle", body: unknown): Promise<TResponse> {
+	/**
+	 * Send `body` with the retry policy. Returns the final answer and whether any attempt was
+	 * resent; throws the final failure. For `/settle`, a failure is an unknown outcome unless every
+	 * attempt failed before sending (a refused connection, an unresolved host).
+	 */
+	async function send(
+		endpoint: "verify" | "settle",
+		body: unknown,
+	): Promise<{ readonly response: Response; readonly text: string; readonly resent: boolean }> {
 		// One serialisation for every attempt: a resend carries byte-identical content.
 		const serialized = JSON.stringify(body);
 		const startedAt = Date.now();
 		let delayMs = retry?.initialDelayMs ?? 0;
 		let result = await attempt(endpoint, serialized);
-		// A settle the facilitator may have acted on is never resent (see `retry`), and its failure
-		// is an unknown outcome, not a failed payment.
+		let nothingSent = result.kind === "retryable" && result.notSent;
 		const giveUp = (failed: Extract<AttemptResult, { kind: "retryable" }>): Error =>
-			endpoint === "settle" && failed.mayHaveActed
+			endpoint === "settle" && !nothingSent
 				? new X402SettleOutcomeUnknownError(failed.error)
 				: failed.error;
-		for (let attempts = 1; result.kind === "retryable"; attempts++) {
+		let attempts = 1;
+		while (result.kind === "retryable") {
 			if (retry === null || attempts >= retry.maxAttempts) throw giveUp(result);
+			// A settle the facilitator may have acted on is never resent (see `retry`).
 			if (endpoint === "settle" && result.mayHaveActed) throw giveUp(result);
 			const waitMs = result.retryAfterMs ?? delayMs;
 			if (Date.now() - startedAt + waitMs > retry.budgetMs) throw giveUp(result);
 			await new Promise((resolve) => setTimeout(resolve, waitMs));
 			delayMs *= 2;
+			attempts++;
 			result = await attempt(endpoint, serialized);
+			nothingSent = nothingSent && result.kind === "retryable" && result.notSent;
 		}
-		const { response, text } = result;
+		return { response: result.response, text: result.text, resent: attempts > 1 };
+	}
+
+	async function verifyInternal(req: X402VerifyRequest): Promise<X402VerifyResponse> {
+		const { response, text } = await send("verify", {
+			x402Version: req.x402Version,
+			paymentPayload: req.paymentPayload,
+			paymentRequirements: req.paymentRequirements,
+		});
 		let parsed: unknown;
 		try {
 			parsed = text === "" ? null : JSON.parse(text);
 		} catch {
 			throw new Error(
-				`Facilitator ${endpoint} returned non-JSON (status ${response.status}): ${text.slice(0, 200)}`,
+				`Facilitator verify returned non-JSON (status ${response.status}): ${text.slice(0, 200)}`,
 			);
 		}
 		if (!response.ok) {
 			throw new Error(
-				`Facilitator ${endpoint} failed (status ${response.status}): ${JSON.stringify(parsed).slice(0, 200)}`,
+				`Facilitator verify failed (status ${response.status}): ${JSON.stringify(parsed).slice(0, 200)}`,
 			);
 		}
-		return parsed as TResponse;
-	}
-
-	async function verifyInternal(req: X402VerifyRequest): Promise<X402VerifyResponse> {
-		return post<X402VerifyResponse>("verify", {
-			x402Version: req.x402Version,
-			paymentPayload: req.paymentPayload,
-			paymentRequirements: req.paymentRequirements,
-		});
+		return parsed as X402VerifyResponse; // the facilitator's /verify answer, per x402 v2
 	}
 
 	async function settleInternal(req: X402SettleRequest): Promise<X402SettleResponse> {
-		return post<X402SettleResponse>("settle", {
+		const { response, text, resent } = await send("settle", {
 			x402Version: req.x402Version,
 			paymentPayload: req.paymentPayload,
 			paymentRequirements: req.paymentRequirements,
 		});
+		let parsed: unknown;
+		try {
+			parsed = text === "" ? null : JSON.parse(text);
+		} catch {
+			parsed = undefined;
+		}
+		// Only a settle response is an answer about the payment — whatever the HTTP status. Anything
+		// else (a catch-all 400 / 500, an HTML error page) says nothing about whether it broadcast.
+		if (!isSettleResponse(parsed)) {
+			throw new X402SettleOutcomeUnknownError(
+				new Error(
+					`Facilitator settle answered status ${response.status} without a settle response: ${text.slice(0, 200)}`,
+				),
+			);
+		}
+		// A failure is final only if nothing was resent: after a resend, "already used" may mean the
+		// earlier attempt broadcast. Success and settlement_pending are answers either way.
+		if (
+			resent &&
+			!parsed.success &&
+			parsed.errorReason !== X402_FACILITATOR_ERROR_CODES.settlement_pending
+		) {
+			throw new X402SettleOutcomeUnknownError(
+				new Error(
+					`Facilitator settle answered ${parsed.errorReason ?? "a failure"} after a resend`,
+				),
+			);
+		}
+		return parsed;
 	}
 
 	async function supportedInternal(): Promise<X402SupportedResponse> {

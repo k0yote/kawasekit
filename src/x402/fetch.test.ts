@@ -517,3 +517,89 @@ describe("wrapFetch — settlement_pending (#53)", () => {
 		expect(events[0]).not.toHaveProperty("transaction");
 	});
 });
+
+describe("wrapFetch — outcomes that may have paid (#53 final review)", () => {
+	const signer = () =>
+		createX402PaymentSigner({
+			network: "testnet",
+			account,
+			asset: { kind: "known", id: "jpyc-v2" },
+		});
+
+	it("a 500 facilitator_settle_outcome_unknown is reported as settle_outcome_unknown, and the body stays readable", async () => {
+		const events: ClientPaymentEvent[] = [];
+		await withHttpListener(
+			async (req, res) => {
+				await readBody(req);
+				const sig = req.headers["payment-signature"];
+				res.setHeader("content-type", "application/json");
+				if (typeof sig === "string" && sig !== "") {
+					res.statusCode = 500;
+					res.end(JSON.stringify({ error: "facilitator_settle_outcome_unknown" }));
+					return;
+				}
+				res.statusCode = 402;
+				res.setHeader(X402_HEADER_PAYMENT_REQUIRED, encodePaymentRequiredHeader(build402()));
+				res.end(JSON.stringify(build402()));
+			},
+			async (baseUrl) => {
+				const fetch402 = wrapFetch({
+					signer: signer(),
+					onPayment: () => true,
+					hooks: {
+						onClientPayment: (e) => {
+							events.push(e);
+						},
+					},
+				});
+				const res = await fetch402(`${baseUrl}/weather`);
+				expect(res.status).toBe(500);
+				expect(await res.json()).toEqual({ error: "facilitator_settle_outcome_unknown" });
+			},
+		);
+		expect(events[0]).toMatchObject({
+			result: "failure",
+			reason: "settle_outcome_unknown",
+			httpStatus: 500,
+		});
+	});
+
+	it("settlement_pending without a transaction (against the spec) is still reported as pending", async () => {
+		const events: ClientPaymentEvent[] = [];
+		await withHttpListener(
+			async (req, res) => {
+				await readBody(req);
+				const sig = req.headers["payment-signature"];
+				res.statusCode = 402;
+				res.setHeader("content-type", "application/json");
+				res.setHeader(X402_HEADER_PAYMENT_REQUIRED, encodePaymentRequiredHeader(build402()));
+				if (typeof sig === "string" && sig !== "") {
+					res.setHeader(
+						X402_HEADER_PAYMENT_RESPONSE,
+						encodePaymentResponseHeader({
+							success: false,
+							errorReason: "settlement_pending",
+							transaction: "",
+							network: REQS.network,
+						}),
+					);
+				}
+				res.end(JSON.stringify(build402()));
+			},
+			async (baseUrl) => {
+				const fetch402 = wrapFetch({
+					signer: signer(),
+					onPayment: () => true,
+					hooks: {
+						onClientPayment: (e) => {
+							events.push(e);
+						},
+					},
+				});
+				expect((await fetch402(`${baseUrl}/weather`)).status).toBe(402);
+			},
+		);
+		expect(events[0]).toMatchObject({ result: "failure", reason: "settlement_pending" });
+		expect(events[0]).not.toHaveProperty("transaction");
+	});
+});

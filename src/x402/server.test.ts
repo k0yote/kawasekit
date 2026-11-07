@@ -44,6 +44,8 @@ const PAYLOAD: X402PaymentPayload = {
 	},
 };
 
+const PAYLOAD_PAYER = "0x857b06519E91e3A54538791bDbb0E22373e36b66";
+
 const SETTLEMENT_OK: X402SettleResponse = {
 	success: true,
 	transaction: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
@@ -249,8 +251,8 @@ describe("createX402Handler — 500 propagation", () => {
 		);
 		expect(response.status).toBe(500);
 		const body = JSON.parse(await response.text());
-		expect(body.error).toBe("facilitator_verify_failed");
-		expect(body.message).toContain("boom-verify");
+		// The body names the failure only (#53 final review): a thrown message can quote an RPC URL.
+		expect(body).toEqual({ error: "facilitator_verify_failed" });
 	});
 
 	it("returns 500 when facilitator.settle throws", async () => {
@@ -622,5 +624,83 @@ describe("createX402Handler — settlement_pending (#53)", () => {
 		expect(
 			decodePaymentResponseHeader(response.headers.get(X402_HEADER_PAYMENT_RESPONSE) ?? ""),
 		).toEqual(failed);
+	});
+});
+
+// #53 final review: what reaches the paying client. A facilitator's errorMessage can quote an RPC
+// URL, and an RPC URL can carry an API key (Alchemy /v2/<key>, Infura /v3/<key>).
+describe("createX402Handler — nothing internal reaches the client (#53 final review)", () => {
+	const SECRET = "https://polygon-amoy.g.alchemy.com/v2/SECRET-KEY-123";
+	const paid = () =>
+		new Request("https://api.example.com/weather", {
+			headers: { [X402_HEADER_PAYMENT_SIGNATURE]: encodePaymentSignatureHeader(PAYLOAD) },
+		});
+
+	it("a settle failure's PAYMENT-RESPONSE carries only success, errorReason, transaction, network, payer", async () => {
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({
+				settle: async () => ({
+					success: false,
+					errorReason: "invalid_transaction_state",
+					errorMessage: `HTTP request failed. URL: ${SECRET}`,
+					transaction: `0x${"66".repeat(32)}`,
+					network: REQS.network,
+					payer: PAYLOAD_PAYER,
+					extra: { internal: SECRET },
+				}),
+			}),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({}),
+		});
+		const response = await handler(paid());
+		const header = response.headers.get(X402_HEADER_PAYMENT_RESPONSE) ?? "";
+		expect(decodePaymentResponseHeader(header)).toEqual({
+			success: false,
+			errorReason: "invalid_transaction_state",
+			transaction: `0x${"66".repeat(32)}`,
+			network: REQS.network,
+			payer: PAYLOAD_PAYER,
+		});
+		expect(atob(header)).not.toContain("SECRET-KEY");
+		expect(await response.text()).not.toContain("SECRET-KEY");
+	});
+
+	it("a 500 names the failure, never the thrown message", async () => {
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({
+				settle: async () => {
+					throw new Error(`HTTP request failed. URL: ${SECRET}`);
+				},
+			}),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({}),
+		});
+		const response = await handler(paid());
+		expect(response.status).toBe(500);
+		expect(await response.json()).toEqual({ error: "facilitator_settle_failed" });
+	});
+
+	it("settlement_pending with an empty transaction (against the spec) is still pending, not a failure", async () => {
+		const settle = vi.fn<Facilitator["settle"]>(async () => ({
+			success: false,
+			errorReason: "settlement_pending",
+			transaction: "",
+			network: REQS.network,
+		}));
+		const handler = createX402Handler({
+			facilitator: stubFacilitator({ settle }),
+			requirementsFor: () => [REQS],
+			handler: async () => jsonResponse({}),
+			settlementPendingRetries: 0,
+		});
+		const first = await handler(paid());
+		expect(
+			decodePaymentRequiredHeader(first.headers.get(X402_HEADER_PAYMENT_REQUIRED) ?? "").error,
+		).toBe("settlement_pending");
+		const duplicate = await handler(paid());
+		expect(settle).toHaveBeenCalledTimes(1);
+		expect(
+			decodePaymentRequiredHeader(duplicate.headers.get(X402_HEADER_PAYMENT_REQUIRED) ?? "").error,
+		).toBe("payment_in_progress");
 	});
 });

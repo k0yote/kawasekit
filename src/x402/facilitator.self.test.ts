@@ -521,6 +521,31 @@ describe("createSelfFacilitator — settle end-to-end", () => {
 	});
 });
 
+// #53 final review: once transferWithAuthorization is broadcast, a receipt that does not arrive in
+// time is `settlement_pending` (x402 v2 §9) with the transaction — not a failed payment. Anvil mines
+// one block per transaction, so waiting for 5 confirmations cannot finish before a 1.5 s timeout.
+describe("createSelfFacilitator — broadcast but not confirmed (#53)", () => {
+	it("answers settlement_pending with the broadcast transaction when the receipt wait times out", async () => {
+		const facilitator = createSelfFacilitator({
+			network: "testnet",
+			walletClient: bobWallet,
+			publicClient,
+			confirmations: 5,
+			receiptTimeoutMs: 1_500,
+		});
+		const requirements = buildJpycRequirements(parseUnits("1", JPYC_DECIMALS));
+		const paymentPayload = await signPayload(requirements);
+		const result = await facilitator.settle({
+			x402Version: 2,
+			paymentPayload,
+			paymentRequirements: requirements,
+		});
+		expect(result.success).toBe(false);
+		expect(result.errorReason).toBe("settlement_pending");
+		expect(result.transaction).toMatch(/^0x[0-9a-fA-F]{64}$/);
+	}, 30_000);
+});
+
 describe("createSelfFacilitator — supported", () => {
 	it("advertises a single (exact, eip155:80002) kind matching the walletClient's chain", async () => {
 		const facilitator = createSelfFacilitator({

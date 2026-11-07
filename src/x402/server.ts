@@ -142,8 +142,10 @@ export interface CreateX402HandlerParams {
 	 * `PAYMENT-RESPONSE` header carrying `errorReason: "settlement_pending"` and
 	 * the transaction hash, so it can reconcile on chain — the payment may still
 	 * land, and paying again would pay twice. The idempotency lease is kept, so
-	 * a duplicate of that request is answered `payment_in_progress` instead of
-	 * settling again.
+	 * a duplicate of that request is not settled again: while the payment is
+	 * still pending it is answered `payment_in_progress`. (Verify runs first, so
+	 * once the transaction confirms, a duplicate is refused by verify — the nonce
+	 * is spent.)
 	 */
 	readonly settlementPendingRetries?: number;
 }
@@ -189,11 +191,13 @@ function isSameRequirements(
 	);
 }
 
-/** x402 v2 §9 `settlement_pending`: broadcast, confirmation not yet established. Non-terminal. */
+/**
+ * x402 v2 §9 `settlement_pending`: broadcast, confirmation not yet established. Non-terminal.
+ * Decided on `errorReason` alone: a facilitator that leaves `transaction` empty (the spec says it
+ * must not) is still saying the payment may land.
+ */
 function isPending(result: X402SettlementResponse): boolean {
-	return (
-		!result.success && result.errorReason === "settlement_pending" && result.transaction !== ""
-	);
+	return !result.success && result.errorReason === "settlement_pending";
 }
 
 async function paymentRequired(
@@ -207,16 +211,30 @@ async function paymentRequired(
 	const body = buildPaymentRequiredResponse({ resource, accepts: requirements, error });
 	const headers = new Headers({ "content-type": "application/json" });
 	headers.set(X402_HEADER_PAYMENT_REQUIRED, encodePaymentRequiredHeader(body));
-	// A failed or pending settlement travels back too (x402 v2 HTTP transport, failure example).
+	// A failed or pending settlement travels back too (x402 v2 HTTP transport, failure example) —
+	// only what the client needs to reconcile. `errorMessage` and `extra` stay server-side: a
+	// facilitator's message can quote an RPC URL, which can carry an API key.
 	if (settlement !== undefined) {
-		headers.set(X402_HEADER_PAYMENT_RESPONSE, encodePaymentResponseHeader(settlement));
+		headers.set(
+			X402_HEADER_PAYMENT_RESPONSE,
+			encodePaymentResponseHeader({
+				success: settlement.success,
+				...(settlement.errorReason !== undefined ? { errorReason: settlement.errorReason } : {}),
+				transaction: settlement.transaction,
+				network: settlement.network,
+				...(settlement.payer !== undefined ? { payer: settlement.payer } : {}),
+			}),
+		);
 	}
 	return new Response(JSON.stringify(body), { status: 402, headers });
 }
 
-function internalError(reason: string, cause: unknown): Response {
-	const message = cause instanceof Error ? cause.message : String(cause);
-	return new Response(JSON.stringify({ error: reason, message }), {
+/**
+ * A 500 that names the failure and nothing else: a thrown message can quote a facilitator's
+ * response body or an RPC URL, and an RPC URL can carry an API key.
+ */
+function internalError(reason: string, _cause: unknown): Response {
+	return new Response(JSON.stringify({ error: reason }), {
 		status: 500,
 		headers: { "content-type": "application/json" },
 	});
@@ -515,8 +533,9 @@ async function resolveInFlight(
 export function createX402Handler(params: CreateX402HandlerParams): X402RequestHandler {
 	const { facilitator, requirementsFor, handler, resourceFor, hooks } = params;
 	const settlementPendingRetries = params.settlementPendingRetries ?? 1;
-	// Resolved ONCE so the in-memory store persists across requests (the Hono
-	// adapter rebuilds the handler per request, so this must live in the closure).
+	// Resolved ONCE so the in-memory store persists across requests made through this handler.
+	// (The Hono adapter rebuilds the handler per request, so it resolves one store itself and
+	// passes it in.)
 	const idempotency = resolveIdempotency(params.idempotency);
 
 	return async function x402Handler(request: Request): Promise<Response> {

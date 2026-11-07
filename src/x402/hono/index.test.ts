@@ -238,3 +238,63 @@ describe("x402Middleware — route-scoped mounting", () => {
 		expect(await freeNoSig.json()).toEqual({ data: "free" });
 	});
 });
+
+// #53 final review: the middleware builds the x402 handler per request (it needs that request's
+// `next`), so it must hand every option through and keep ONE idempotency store across requests —
+// otherwise each request had a fresh store and the lease of a pending payment was lost.
+describe("x402Middleware — options reach the handler (#53 final review)", () => {
+	const PENDING: X402SettleResponse = {
+		success: false,
+		errorReason: "settlement_pending",
+		transaction: `0x${"77".repeat(32)}`,
+		network: "eip155:80002",
+	};
+	const paid = () =>
+		new Request("https://api.example.com/weather", {
+			headers: { [X402_HEADER_PAYMENT_SIGNATURE]: encodePaymentSignatureHeader(PAYLOAD) },
+		});
+
+	function appWith(settle: Facilitator["settle"], extra: Record<string, unknown> = {}) {
+		const app = new Hono();
+		app.use(
+			"*",
+			x402Middleware({
+				facilitator: stubFacilitator({ settle }),
+				requirementsFor: () => [REQS],
+				...extra,
+			}),
+		);
+		app.get("/weather", (c) => c.json({ weather: "sunny" }));
+		return app;
+	}
+
+	it("a duplicate of a pending payment is answered payment_in_progress, not settled again", async () => {
+		const settle = vi.fn<Facilitator["settle"]>(async () => PENDING);
+		const app = appWith(settle, { settlementPendingRetries: 0 });
+		expect((await app.request(paid())).status).toBe(402);
+		const duplicate = await app.request(paid());
+		expect(settle).toHaveBeenCalledTimes(1);
+		expect(
+			decodePaymentRequiredHeader(duplicate.headers.get(X402_HEADER_PAYMENT_REQUIRED) ?? "").error,
+		).toBe("payment_in_progress");
+	});
+
+	it("passes settlementPendingRetries through", async () => {
+		const settle = vi.fn<Facilitator["settle"]>(async () => PENDING);
+		const app = appWith(settle, { settlementPendingRetries: 2 });
+		expect((await app.request(paid())).status).toBe(402);
+		expect(settle).toHaveBeenCalledTimes(3);
+	});
+
+	it("passes hooks through", async () => {
+		const onPaymentRequired = vi.fn();
+		const app = appWith(
+			vi.fn<Facilitator["settle"]>(async () => SETTLEMENT_OK),
+			{
+				hooks: { onPaymentRequired },
+			},
+		);
+		expect((await app.request(new Request("https://api.example.com/weather"))).status).toBe(402);
+		expect(onPaymentRequired).toHaveBeenCalledTimes(1);
+	});
+});

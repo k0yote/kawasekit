@@ -20,9 +20,11 @@
  * §9), the transaction was broadcast and may still land; `onClientPayment`
  * reports reason `settlement_pending` with its `transaction`. Do not repeat the
  * purchase — a new attempt signs a new authorization and can pay twice —
- * reconcile the transaction on chain instead. Where a server may answer
- * pending, set `idempotencyKeyFor`: a repeated purchase then derives the same
- * nonce, which the chain spends once.
+ * reconcile the transaction on chain instead. The same holds for a 500
+ * `facilitator_settle_outcome_unknown` (reason `settle_outcome_unknown`) — and,
+ * strictly, for any non-2xx answer to the signed retry: the authorization was
+ * handed over and may have been settled. Set `idempotencyKeyFor` so a repeated
+ * purchase derives the same nonce, which the chain spends once.
  *
  * Streaming request bodies are not retry-safe; the wrapper passes `init.body`
  * through verbatim, so callers who need retry must pass a buffered body
@@ -157,17 +159,36 @@ function defaultSelectRequirements(
 // Public API
 // ---------------------------------------------------------------------------
 
-/** The pending transaction a 402's `PAYMENT-RESPONSE` names, if it says `settlement_pending`. */
-function readPendingSettlement(response: Response): Hex | undefined {
+/**
+ * Whether a 402's `PAYMENT-RESPONSE` says `settlement_pending`, and the transaction it names. Decided
+ * on `errorReason` alone: a pending answer without a transaction (against the spec) is still pending.
+ */
+function readPendingSettlement(response: Response): { readonly transaction?: Hex } | undefined {
 	const header = response.headers.get(X402_HEADER_PAYMENT_RESPONSE);
 	if (header === null || header === "") return undefined;
 	try {
 		const settlement = decodePaymentResponseHeader(header);
-		return settlement.errorReason === "settlement_pending" && settlement.transaction !== ""
-			? (settlement.transaction as Hex) // the settle response's `transaction` is a tx hash
-			: undefined;
+		if (settlement.errorReason !== "settlement_pending") return undefined;
+		return settlement.transaction !== ""
+			? { transaction: settlement.transaction as Hex } // the settle response's `transaction` is a tx hash
+			: {};
 	} catch {
 		return undefined;
+	}
+}
+
+/** Whether a 5xx says the server could not tell if the payment settled (`createX402Handler`). */
+async function isSettleOutcomeUnknown(response: Response): Promise<boolean> {
+	try {
+		const body: unknown = await response.clone().json();
+		return (
+			typeof body === "object" &&
+			body !== null &&
+			"error" in body &&
+			body.error === "facilitator_settle_outcome_unknown"
+		);
+	} catch {
+		return false;
 	}
 }
 
@@ -299,10 +320,13 @@ export function wrapFetch(params: WrapFetchParams): X402Fetch {
 			// still land. Report the transaction so the caller reconciles on chain; never pay again.
 			const pending = readPendingSettlement(retryResponse);
 			if (pending !== undefined) {
-				emitFailure("settlement_pending", 402, pending);
+				emitFailure("settlement_pending", 402, pending.transaction);
 			} else {
 				emitFailure("settle_rejected", 402);
 			}
+		} else if (retryResponse.status >= 500 && (await isSettleOutcomeUnknown(retryResponse))) {
+			// The server could not tell whether the payment settled: as with pending, it may have.
+			emitFailure("settle_outcome_unknown", retryResponse.status);
 		} else {
 			emitFailure("http_error", retryResponse.status);
 		}

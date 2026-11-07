@@ -117,10 +117,12 @@ export class X402FacilitatorTimeoutError extends Error {
 }
 
 /**
- * A `/settle` whose outcome is **unknown** ({@link createHttpFacilitator}): the facilitator may
- * have acted on it — a 502 / 504 from something in front of it, a connection dropped after the
- * request went out, a `timeoutMs` timeout — and the request is not resent. The transaction may
- * already be broadcast and may still land.
+ * A `/settle` whose outcome is **unknown** ({@link createHttpFacilitator}): something may have
+ * acted on it, and no answer says what happened. That is every thrown settle failure except one
+ * where nothing was ever sent (a refused connection, an unresolved host): a 502 / 503 / 504 (a proxy
+ * can answer 503 after forwarding), a connection dropped after sending, a `timeoutMs` timeout, a
+ * body that is not a settle response, or a failure answered only after a resend. The transaction
+ * may already be broadcast and may still land.
  *
  * Do not treat it as a failed payment, and never ask the payer for a new authorization because of
  * it: reconcile on chain first (the authorization's nonce is spent once it settles).
