@@ -16,6 +16,7 @@ import {
 	type Hex,
 	keccak256,
 	parseSignature,
+	size,
 	stringToHex,
 } from "viem";
 
@@ -57,17 +58,32 @@ export interface CancelAuthorizationMessage {
 }
 
 /**
- * A signed EIP-3009 authorization, ready to be passed to the token's
- * `*WithAuthorization` entrypoint as `(v, r, s)`.
+ * A signed EIP-3009 authorization.
+ *
+ * An EOA's signature (65 bytes) also comes split into `(v, r, s)`, for the token's
+ * `*WithAuthorization(..., v, r, s)` entrypoint. Any other signature — a deployed smart account's
+ * ERC-1271 signature, for instance — comes whole in `signature`, with no `v` / `r` / `s`: only a
+ * token that checks ERC-1271 accepts it, through its `bytes signature` overload (USDC v2.2 does;
+ * JPYC checks with `ecrecover` only). Narrowing on `v` settles `r` and `s` too.
+ *
+ * @example
+ * ```ts
+ * const signed = await signTransferWithAuthorization(account, domain, message);
+ * if (signed.v !== undefined) {
+ *   // EOA: transferWithAuthorization(..., signed.v, signed.r, signed.s)
+ * } else {
+ *   // smart account: transferWithAuthorization(..., signed.signature) on an ERC-1271 token
+ * }
+ * ```
  */
-export interface SignedAuthorization<TMessage> {
+export type SignedAuthorization<TMessage> = {
 	readonly signature: Hex;
-	readonly v: number;
-	readonly r: Hex;
-	readonly s: Hex;
 	readonly domain: Eip3009Domain;
 	readonly message: TMessage;
-}
+} & (
+	| { readonly v: number; readonly r: Hex; readonly s: Hex }
+	| { readonly v?: undefined; readonly r?: undefined; readonly s?: undefined }
+);
 
 // ---------------------------------------------------------------------------
 // EIP-712 type definitions (must match EIP-3009 byte-for-byte)
@@ -227,7 +243,9 @@ function assertSignerMatches(account: Account, expectedFrom: Address, role: stri
  * Signs an EIP-3009 `TransferWithAuthorization` message.
  *
  * The signing account MUST equal `message.from` — EIP-3009 rejects signatures
- * from anyone else (the on-chain check is pure `ecrecover` against `from`).
+ * from anyone else. JPYC checks with `ecrecover` against `from`, so `from` must be
+ * an EOA there; a token that also checks ERC-1271 (USDC v2.2) accepts a deployed
+ * smart account's signature, which comes back whole (see {@link SignedAuthorization}).
  *
  * @example
  * ```ts
@@ -253,7 +271,7 @@ function assertSignerMatches(account: Account, expectedFrom: Address, role: stri
  *   validBefore: authorizationDeadlineFromNow(300),
  *   nonce: generateAuthorizationNonce(),
  * });
- * // → submit (v, r, s) to token.transferWithAuthorization(...)
+ * // → an EOA's signature also comes as (v, r, s) for token.transferWithAuthorization(...)
  * ```
  */
 export async function signTransferWithAuthorization(
@@ -324,6 +342,12 @@ function splitAuthorization<TMessage>(
 	domain: Eip3009Domain,
 	message: TMessage,
 ): SignedAuthorization<TMessage> {
+	// Only an ECDSA signature (65 bytes) has (v, r, s). Anything else — a smart account's ERC-1271
+	// signature, an ERC-6492 wrapper — is kept whole: whether it settles is for the token (and, for an
+	// ERC-6492 wrapper, the facilitator) to decide.
+	if (size(signature) !== 65) {
+		return { signature, domain, message };
+	}
 	const parsed = parseSignature(signature);
 	// viem's parseSignature returns yParity ∈ {0, 1} as well as v when present.
 	const v = parsed.v !== undefined ? Number(parsed.v) : (parsed.yParity ?? 0) + 27;

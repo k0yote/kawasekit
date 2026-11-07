@@ -120,6 +120,18 @@ function encodeMint(to: Address, amount: bigint): Hex {
 	});
 }
 
+/** MockJPYC takes `(v, r, s)`: an EOA's signature comes split (see `SignedAuthorization`). */
+function vrs(signed: {
+	v?: number | undefined;
+	r?: Hex | undefined;
+	s?: Hex | undefined;
+}): [number, Hex, Hex] {
+	if (signed.v === undefined || signed.r === undefined || signed.s === undefined) {
+		throw new Error("expected an EOA signature, split into (v, r, s)");
+	}
+	return [signed.v, signed.r, signed.s];
+}
+
 function encodeTransferAuth(signed: {
 	message: {
 		from: Address;
@@ -129,9 +141,9 @@ function encodeTransferAuth(signed: {
 		validBefore: bigint;
 		nonce: Hex;
 	};
-	v: number;
-	r: Hex;
-	s: Hex;
+	v?: number | undefined;
+	r?: Hex | undefined;
+	s?: Hex | undefined;
 }): Hex {
 	return encodeFunctionData({
 		abi: mockJpycAbi,
@@ -143,9 +155,7 @@ function encodeTransferAuth(signed: {
 			signed.message.validAfter,
 			signed.message.validBefore,
 			signed.message.nonce,
-			signed.v,
-			signed.r,
-			signed.s,
+			...vrs(signed),
 		],
 	});
 }
@@ -159,9 +169,9 @@ function encodeReceiveAuth(signed: {
 		validBefore: bigint;
 		nonce: Hex;
 	};
-	v: number;
-	r: Hex;
-	s: Hex;
+	v?: number | undefined;
+	r?: Hex | undefined;
+	s?: Hex | undefined;
 }): Hex {
 	return encodeFunctionData({
 		abi: mockJpycAbi,
@@ -173,23 +183,21 @@ function encodeReceiveAuth(signed: {
 			signed.message.validAfter,
 			signed.message.validBefore,
 			signed.message.nonce,
-			signed.v,
-			signed.r,
-			signed.s,
+			...vrs(signed),
 		],
 	});
 }
 
 function encodeCancelAuth(signed: {
 	message: { authorizer: Address; nonce: Hex };
-	v: number;
-	r: Hex;
-	s: Hex;
+	v?: number | undefined;
+	r?: Hex | undefined;
+	s?: Hex | undefined;
 }): Hex {
 	return encodeFunctionData({
 		abi: mockJpycAbi,
 		functionName: "cancelAuthorization",
-		args: [signed.message.authorizer, signed.message.nonce, signed.v, signed.r, signed.s],
+		args: [signed.message.authorizer, signed.message.nonce, ...vrs(signed)],
 	});
 }
 

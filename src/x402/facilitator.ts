@@ -15,7 +15,7 @@
  */
 
 import type { Account, Address, Chain, Hex, PublicClient, Transport, WalletClient } from "viem";
-import { getAddress, parseSignature, recoverTypedDataAddress } from "viem";
+import { getAddress, parseSignature, recoverTypedDataAddress, size } from "viem";
 import { getChain, isSupportedChainId, type KawaseChain, type SupportedChainId } from "../chains";
 import {
 	invokeHookSafely,
@@ -314,6 +314,11 @@ export function deriveReceiptTimeoutMs(chain: KawaseChain, confirmations: number
  * Intended for self-hosted paywalls and testnet (Polygon Amoy) where the
  * Coinbase CDP facilitator is not guaranteed to support the chain.
  *
+ * **EOA payers only**: it recovers the signer with `ecrecover` and settles
+ * through the token's `(v, r, s)` overload, so a payment signed by a smart
+ * account (an ERC-1271 signature, not 65 bytes) is refused at verify as
+ * `invalid_exact_evm_payload_signature`.
+ *
  * **Concurrent settle() calls**: under any meaningful load (e.g. an LLM
  * agent fan-out) you will issue multiple `transferWithAuthorization`
  * broadcasts from the same facilitator EOA in parallel. Without local nonce
@@ -546,7 +551,17 @@ export function createSelfFacilitator(params: CreateSelfFacilitatorParams): Faci
 			);
 		}
 
-		// 5. Signature recovery
+		// 5. Signature recovery. This facilitator recovers with `ecrecover` and settles through the
+		// `(v, r, s)` overload, so it takes an EOA's 65-byte signature only; a smart account's ERC-1271
+		// signature needs a facilitator that verifies via ERC-1271 and settles through the `bytes`
+		// overload.
+		if (size(exact.signature) !== 65) {
+			return failVerify(
+				"invalid_exact_evm_payload_signature",
+				`createSelfFacilitator takes an EOA's 65-byte signature only (got ${size(exact.signature)} bytes); a smart account's ERC-1271 signature needs a facilitator that settles through the token's bytes-signature overload`,
+				auth.from,
+			);
+		}
 		let recovered: Address;
 		try {
 			const domain = resolveDomain(req.paymentRequirements);

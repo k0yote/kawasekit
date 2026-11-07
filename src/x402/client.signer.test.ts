@@ -1,5 +1,12 @@
-import { getAddress, recoverTypedDataAddress } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import {
+	type Address,
+	concat,
+	getAddress,
+	type Hex,
+	recoverTypedDataAddress,
+	serializeErc6492Signature,
+} from "viem";
+import { privateKeyToAccount, toAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import { createSpendingPolicy } from "../policy/spending-policy";
 import { PolicyGatedSignerConfigError } from "../signer/errors";
@@ -135,5 +142,87 @@ describe("createX402PaymentSigner — signer (PolicyGatedSigner) variant", () =>
 				requireEnforcement: "cryptographic",
 			}),
 		).toThrow(PolicyGatedSignerConfigError);
+	});
+});
+
+describe("createX402PaymentSigner — signer variant, a smart account's signature (#54)", () => {
+	const SMART_ACCOUNT = getAddress("0x2222222222222222222222222222222222222222");
+	const KERNEL_SIGNATURE: Hex = concat([
+		"0x01",
+		"0x3333333333333333333333333333333333333333",
+		`0x${"ab".repeat(64)}1b`,
+	]);
+	const USDC_LIKE = getAddress("0x4444444444444444444444444444444444444444");
+	const USDC_ASSET = {
+		kind: "unsafeOverride",
+		domain: { name: "USDC", version: "2", verifyingContract: USDC_LIKE },
+	} as const;
+	const USDC_REQ: X402PaymentRequirements = {
+		...JPYC_REQ,
+		amount: "1000000",
+		asset: USDC_LIKE,
+		extra: { assetTransferMethod: "eip3009", name: "USDC", version: "2" },
+	};
+
+	function smartAccountSigner(
+		signature: Hex,
+		asset: typeof ASSET | typeof USDC_ASSET,
+		token: Address,
+	) {
+		return createLocalPolicyGatedSigner({
+			account: toAccount({
+				address: SMART_ACCOUNT,
+				async signMessage() {
+					throw new Error("unused");
+				},
+				async signTransaction() {
+					throw new Error("unused");
+				},
+				async signTypedData() {
+					return signature;
+				},
+			}),
+			policy: createSpendingPolicy({
+				session: { id: "conv-1", notAfter: 2_000_000_000n },
+				perToken: [{ token, maxPerSign: 10n ** 20n }],
+				recipientAllowlist: "any",
+			}),
+			asset,
+			acknowledgeAdvisory: true,
+		});
+	}
+
+	it("carries it whole on a token that checks ERC-1271", async () => {
+		const x402 = createX402PaymentSigner({
+			network: "testnet",
+			signer: smartAccountSigner(KERNEL_SIGNATURE, USDC_ASSET, USDC_LIKE),
+			asset: USDC_ASSET,
+		});
+		const payload = await x402.sign({ paymentRequirements: USDC_REQ });
+		expect((payload.payload as { signature: Hex }).signature).toBe(KERNEL_SIGNATURE);
+	});
+
+	it("refuses it on JPYC (ecrecover only)", async () => {
+		const x402 = createX402PaymentSigner({
+			network: "testnet",
+			signer: smartAccountSigner(KERNEL_SIGNATURE, ASSET, TOKEN),
+			asset: ASSET,
+		});
+		await expect(x402.sign({ paymentRequirements: JPYC_REQ })).rejects.toThrow(/ecrecover/);
+	});
+
+	it("sends an ERC-6492 signature (undeployed account) as it is: the facilitator may deploy it", async () => {
+		const undeployed = serializeErc6492Signature({
+			address: "0x6666666666666666666666666666666666666666",
+			data: "0xdeadbeef",
+			signature: KERNEL_SIGNATURE,
+		});
+		const x402 = createX402PaymentSigner({
+			network: "testnet",
+			signer: smartAccountSigner(undeployed, USDC_ASSET, USDC_LIKE),
+			asset: USDC_ASSET,
+		});
+		const payload = await x402.sign({ paymentRequirements: USDC_REQ });
+		expect((payload.payload as { signature: Hex }).signature).toBe(undeployed);
 	});
 });
