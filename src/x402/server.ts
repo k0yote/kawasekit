@@ -49,7 +49,11 @@ import {
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./encoding";
-import { X402FacilitatorTimeoutError, X402InvalidPayloadError } from "./errors";
+import {
+	X402FacilitatorTimeoutError,
+	X402InvalidPayloadError,
+	X402SettleOutcomeUnknownError,
+} from "./errors";
 import { buildPaymentRequiredResponse } from "./payment-requirements";
 import type {
 	Facilitator,
@@ -625,10 +629,13 @@ export function createX402Handler(params: CreateX402HandlerParams): X402RequestH
 		try {
 			settleResult = await facilitator.settle(settleRequest);
 		} catch (cause) {
-			if (cause instanceof X402FacilitatorTimeoutError) {
+			if (
+				cause instanceof X402SettleOutcomeUnknownError ||
+				(cause instanceof X402FacilitatorTimeoutError && cause.endpoint === "settle")
+			) {
 				// Outcome unknown: the payment may still land. Keep the lease so a duplicate is told
 				// "in progress" rather than settling — and being refused — a second time.
-				return internalError("facilitator_settle_timeout", cause);
+				return internalError("facilitator_settle_outcome_unknown", cause);
 			}
 			await releaseLease(idempotency, idemKey, lease);
 			return internalError("facilitator_settle_failed", cause);

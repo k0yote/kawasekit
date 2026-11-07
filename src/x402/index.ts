@@ -39,6 +39,7 @@ export {
 	X402InvalidConfigError,
 	X402InvalidPayloadError,
 	X402PolicyRejectedError,
+	X402SettleOutcomeUnknownError,
 } from "./errors";
 export {
 	/** @deprecated Renamed to `CreateHttpFacilitatorParams`. Removed in v0.2.0. */

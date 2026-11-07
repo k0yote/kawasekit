@@ -8,7 +8,7 @@ import {
 	X402_HEADER_PAYMENT_RESPONSE,
 	X402_HEADER_PAYMENT_SIGNATURE,
 } from "./encoding";
-import { X402FacilitatorTimeoutError } from "./errors";
+import { X402SettleOutcomeUnknownError } from "./errors";
 import { createX402Handler, type X402HandlerContext } from "./server";
 import type {
 	Facilitator,
@@ -583,9 +583,9 @@ describe("createX402Handler — settlement_pending (#53)", () => {
 		).toEqual(PENDING);
 	});
 
-	it("a settle whose outcome is unknown (timeout) answers 500 facilitator_settle_timeout and keeps the lease", async () => {
+	it("a settle whose outcome is unknown answers 500 facilitator_settle_outcome_unknown and keeps the lease", async () => {
 		const settle = vi.fn<Facilitator["settle"]>(async () => {
-			throw new X402FacilitatorTimeoutError("settle", 50);
+			throw new X402SettleOutcomeUnknownError(new Error("Facilitator settle failed (status 504)"));
 		});
 		const handler = createX402Handler({
 			facilitator: stubFacilitator({ settle }),
@@ -594,7 +594,9 @@ describe("createX402Handler — settlement_pending (#53)", () => {
 		});
 		const first = await handler(paid());
 		expect(first.status).toBe(500);
-		expect(((await first.json()) as { error: string }).error).toBe("facilitator_settle_timeout");
+		expect(((await first.json()) as { error: string }).error).toBe(
+			"facilitator_settle_outcome_unknown",
+		);
 		const duplicate = await handler(paid());
 		expect(settle).toHaveBeenCalledTimes(1);
 		const required = decodePaymentRequiredHeader(

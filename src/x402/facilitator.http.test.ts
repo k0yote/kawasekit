@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readBody, withHttpListener } from "../../test/helpers/http-listener";
 import { JPYC_V2_ADDRESS } from "../tokens/jpyc";
-import { X402FacilitatorTimeoutError } from "./errors";
+import { X402FacilitatorTimeoutError, X402SettleOutcomeUnknownError } from "./errors";
 import { createCoinbaseFacilitator, createHttpFacilitator } from "./facilitator";
 import type {
 	X402PaymentPayload,
@@ -379,15 +379,20 @@ describe("createHttpFacilitator — retry on 502/503/504 and network errors (#53
 				SETTLED,
 			);
 			await withHttpListener(f.handler, async (baseUrl) => {
-				await expect(
-					createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } }).settle(SETTLE_REQ),
-				).rejects.toThrow(String(status));
+				const error = await createHttpFacilitator({ baseUrl, retry: { initialDelayMs: 1 } })
+					.settle(SETTLE_REQ)
+					.then(
+						() => null,
+						(e: unknown) => e,
+					);
+				expect(error).toBeInstanceOf(X402SettleOutcomeUnknownError);
+				expect((error as Error).message).toMatch(String(status));
 			});
 			expect(f.bodies).toHaveLength(1);
 		}
 	});
 
-	it("does not resend /settle after a network error", async () => {
+	it("does not resend /settle after a network error, and reports the outcome as unknown", async () => {
 		let calls = 0;
 		const fetchImpl: typeof fetch = async (input, init) => {
 			calls++;
@@ -401,9 +406,32 @@ describe("createHttpFacilitator — retry on 502/503/504 and network errors (#53
 				fetch: fetchImpl,
 				retry: { initialDelayMs: 1 },
 			});
-			await expect(facilitator.settle(SETTLE_REQ)).rejects.toThrow(/fetch failed/);
+			await expect(facilitator.settle(SETTLE_REQ)).rejects.toBeInstanceOf(
+				X402SettleOutcomeUnknownError,
+			);
 		});
 		expect(calls).toBe(1);
+	});
+
+	it("resends /settle when the connection was refused — nothing was sent", async () => {
+		let calls = 0;
+		const fetchImpl: typeof fetch = async (input, init) => {
+			calls++;
+			if (calls === 1) {
+				throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+			}
+			return fetch(input, init);
+		};
+		const f = flaky(0, unavailable(), SETTLED);
+		await withHttpListener(f.handler, async (baseUrl) => {
+			const facilitator = createHttpFacilitator({
+				baseUrl,
+				fetch: fetchImpl,
+				retry: { initialDelayMs: 1 },
+			});
+			expect((await facilitator.settle(SETTLE_REQ)).success).toBe(true);
+		});
+		expect(calls).toBe(2);
 	});
 
 	it("retries /verify after a network error (the connection dropped)", async () => {
@@ -431,16 +459,18 @@ describe("createHttpFacilitator — timeoutMs (#53)", () => {
 		// never answers
 	};
 
-	it("a /settle that does not answer in time throws X402FacilitatorTimeoutError — outcome unknown", async () => {
+	it("a /settle that does not answer in time throws X402SettleOutcomeUnknownError caused by the timeout", async () => {
 		await withHttpListener(silent, async (baseUrl) => {
 			const facilitator = createHttpFacilitator({ baseUrl, timeoutMs: 50, retry: false });
 			const error = await facilitator.settle(SETTLE_REQ).then(
 				() => null,
 				(e: unknown) => e,
 			);
-			expect(error).toBeInstanceOf(X402FacilitatorTimeoutError);
-			expect((error as X402FacilitatorTimeoutError).endpoint).toBe("settle");
+			expect(error).toBeInstanceOf(X402SettleOutcomeUnknownError);
 			expect((error as Error).message).toMatch(/may still settle/);
+			const cause = (error as Error).cause;
+			expect(cause).toBeInstanceOf(X402FacilitatorTimeoutError);
+			expect((cause as X402FacilitatorTimeoutError).endpoint).toBe("settle");
 		});
 	});
 
@@ -457,7 +487,7 @@ describe("createHttpFacilitator — timeoutMs (#53)", () => {
 					retry: { initialDelayMs: 1 },
 				});
 				await expect(facilitator.settle(SETTLE_REQ)).rejects.toBeInstanceOf(
-					X402FacilitatorTimeoutError,
+					X402SettleOutcomeUnknownError,
 				);
 			},
 		);

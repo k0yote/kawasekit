@@ -24,7 +24,7 @@ import {
 	type VerifyEvent,
 } from "../observability/hooks";
 import { JPYC_EIP712_DOMAIN_HINT, JPYC_V2_ADDRESS, jpycAbi } from "../tokens/jpyc";
-import { X402FacilitatorTimeoutError } from "./errors";
+import { X402FacilitatorTimeoutError, X402SettleOutcomeUnknownError } from "./errors";
 import type {
 	Facilitator,
 	X402PaymentRequirements,
@@ -750,7 +750,9 @@ export interface CreateHttpFacilitatorParams {
 	 *   not take the request. After a 502 / 504, a dropped connection or a
 	 *   timeout the first attempt may already have broadcast; a resend could then
 	 *   answer "authorization already used" and turn a payment that is landing
-	 *   into a reported failure. Those throw instead, and the outcome is unknown.
+	 *   into a reported failure. Those throw {@link X402SettleOutcomeUnknownError}
+	 *   instead. A refused connection or an unresolved host sent nothing, and is
+	 *   resent.
 	 *
 	 * Resending can never charge twice: the body carries the same signed
 	 * authorization, and EIP-3009 spends its nonce once on chain. Other statuses
@@ -762,8 +764,9 @@ export interface CreateHttpFacilitatorParams {
 	readonly retry?: X402FacilitatorRetryOptions | false;
 	/**
 	 * Abort an attempt that has not answered within this many milliseconds.
-	 * Absent: no timeout. A `/settle` that times out on its last attempt throws
-	 * {@link X402FacilitatorTimeoutError}: its outcome is unknown, not failed.
+	 * Absent: no timeout. A `/verify` that times out throws
+	 * {@link X402FacilitatorTimeoutError}; a `/settle` that times out throws
+	 * {@link X402SettleOutcomeUnknownError} (caused by it) — unknown, not failed.
 	 */
 	readonly timeoutMs?: number;
 }
@@ -787,6 +790,16 @@ const DEFAULT_RETRY: Required<X402FacilitatorRetryOptions> = {
 	initialDelayMs: 500,
 };
 const RETRYABLE_STATUS = new Set([502, 503, 504]);
+/** Network error codes raised before a request is sent: the facilitator cannot have acted. */
+const NOT_SENT_CODES = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
+
+/** Whether a fetch rejection says the request never left (a refused socket, an unresolved host). */
+function wasNotSent(error: unknown): boolean {
+	const cause = error instanceof Error ? error.cause : undefined;
+	const code =
+		typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+	return typeof code === "string" && NOT_SENT_CODES.has(code);
+}
 
 /** `Retry-After` as milliseconds: delta-seconds or an HTTP date; `undefined` when absent or unreadable. */
 function parseRetryAfter(value: string | null, nowMs: number): number | undefined {
@@ -876,11 +889,11 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 					error: new X402FacilitatorTimeoutError(endpoint, timeoutMs, { cause }),
 				};
 			}
-			// The request never produced a response: a refused socket or DNS (not sent), or a
-			// connection dropped after sending (sent). The two are indistinguishable here.
+			// No response: a refused socket or an unresolved host never sent anything; any other
+			// network error (a connection dropped after sending) may have reached the facilitator.
 			return {
 				kind: "retryable",
-				mayHaveActed: true,
+				mayHaveActed: !wasNotSent(cause),
 				error: cause instanceof Error ? cause : new Error(String(cause)),
 			};
 		} finally {
@@ -894,12 +907,17 @@ export function createHttpFacilitator(params: CreateHttpFacilitatorParams): Faci
 		const startedAt = Date.now();
 		let delayMs = retry?.initialDelayMs ?? 0;
 		let result = await attempt(endpoint, serialized);
+		// A settle the facilitator may have acted on is never resent (see `retry`), and its failure
+		// is an unknown outcome, not a failed payment.
+		const giveUp = (failed: Extract<AttemptResult, { kind: "retryable" }>): Error =>
+			endpoint === "settle" && failed.mayHaveActed
+				? new X402SettleOutcomeUnknownError(failed.error)
+				: failed.error;
 		for (let attempts = 1; result.kind === "retryable"; attempts++) {
-			if (retry === null || attempts >= retry.maxAttempts) throw result.error;
-			// A settle the facilitator may have acted on is never resent (see `retry`).
-			if (endpoint === "settle" && result.mayHaveActed) throw result.error;
+			if (retry === null || attempts >= retry.maxAttempts) throw giveUp(result);
+			if (endpoint === "settle" && result.mayHaveActed) throw giveUp(result);
 			const waitMs = result.retryAfterMs ?? delayMs;
-			if (Date.now() - startedAt + waitMs > retry.budgetMs) throw result.error;
+			if (Date.now() - startedAt + waitMs > retry.budgetMs) throw giveUp(result);
 			await new Promise((resolve) => setTimeout(resolve, waitMs));
 			delayMs *= 2;
 			result = await attempt(endpoint, serialized);
